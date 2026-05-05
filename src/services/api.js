@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://apiqfventas.qf.com.pe';
+const API_BASE_URL = 'http://192.168.23.152:5236';
 
 export const login = async (username, password) => {
   try {
@@ -63,7 +63,37 @@ export const updateProduct = async (productData) => {
     return { success: false };
   }
 };
-
+export const listarSucursales = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/AlmacenReporte/ListarSucursales`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    console.log('Sucursales obtenidas:', result);
+    
+    // Ajusta el retorno según la estructura de tu API
+    // Si la API devuelve { data: [...] }
+    if (result.data) {
+      return result.data;
+    }
+    // Si devuelve directamente el array
+    if (Array.isArray(result)) {
+      return result;
+    }
+    // Si devuelve { success: true, data: [...] }
+    if (result.success && result.data) {
+      return result.data;
+    }
+    
+    return [];
+  } catch (error) {
+    console.error('Error al listar sucursales:', error);
+    throw error;
+  }
+};
 // Obtener producto por código de barras
 export const getProductByBarcode = async (barcode) => {
   try {
@@ -124,18 +154,144 @@ export const getTomaInventario = async (idEmpleado = null) => {
     return [];
   }
 };
-
 export const getTomaInventarioByBarcode = async (barcode) => {
   try {
     const response = await fetch(`${API_BASE_URL}/api/Etiqueta/obtener_infoinventario/${barcode}`);
-    const result = await response.json();
-    console.log('Producto obtenido:', result);
-    return result;
+    
+    console.log('Response status:', response.status);
+    
+    // Si la respuesta no es exitosa
+    if (!response.ok) {
+      console.log('Error en respuesta:', response.status);
+      return null;
+    }
+    
+    const text = await response.text();
+    console.log('Respuesta cruda obtener_infoinventario:', text);
+    
+    // Si la respuesta está vacía
+    if (!text || text.trim() === '') {
+      console.log('Respuesta vacía');
+      return null;
+    }
+    
+    // Intentar parsear JSON
+    try {
+      const result = JSON.parse(text);
+      console.log('Producto obtenido:', result);
+      return result;
+    } catch (parseError) {
+      console.error('Error parseando JSON:', parseError);
+      console.log('Texto que no es JSON:', text);
+      return null;
+    }
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Error en getTomaInventarioByBarcode:', error);
     return null;
   }
 };
+
+export const eliminarTomaInventario = async (idtomainventario) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/Etiqueta/eliminar_tomainventario`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({ idtomainventario: idtomainventario })
+    });
+    
+    const result = await response.json();
+    console.log('Respuesta eliminar:', result);
+    
+    return {
+      success: result.success === 1 || result.Success === 1 || result.success === true,
+      message: result.message || result.Message || 'Producto eliminado'
+    };
+  } catch (error) {
+    console.error('Error al eliminar:', error);
+    return { success: false, message: error.message };
+  }
+};
+
+
+export const getInventarioEstado = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/Etiqueta/estado-inventario`);
+    const result = await response.json();
+    console.log('Estado inventario:', result);
+    return result;
+  } catch (error) {
+    console.error('Error al obtener estado:', error);
+    return { success: true, estado: 'PENDIENTE', tipo: 'PARCIAL' };
+  }
+};
+
+// Iniciar inventario (solo ADMIN)
+export const iniciarInventario = async (tipo, usuario) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/Etiqueta/iniciar-inventario`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        tipo: tipo,
+        usuario: usuario
+      })
+    });
+    
+    const result = await response.json();
+    console.log('Iniciar inventario respuesta:', result);
+    return result;
+  } catch (error) {
+    console.error('Error al iniciar:', error);
+    return { success: false, message: error.message };
+  }
+};
+
+// Finalizar inventario (solo ADMIN)
+export const finalizarInventario = async (usuario) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/Etiqueta/finalizar-inventario`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        usuario: usuario
+      })
+    });
+    
+    const result = await response.json();
+    console.log('Finalizar inventario respuesta:', result);
+    return result;
+  } catch (error) {
+    console.error('Error al finalizar:', error);
+    return { success: false, message: error.message };
+  }
+};
+
+// Validar si se puede escanear (antes de cada escaneo)
+export const validarPuedeEscanear = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/Etiqueta/validar-escaneo-inventario`);
+    const result = await response.json();
+    console.log('Validar escaneo:', result);
+    return result;
+  } catch (error) {
+    console.error('Error al validar:', error);
+    return { permitido: false, mensaje: 'Error al validar estado del inventario' };
+  }
+};
+
+
+
+
+
+
+
 export const insertTomaInventario = async (productData, user) => {
   try {
     const bodyData = {
@@ -149,7 +305,13 @@ export const insertTomaInventario = async (productData, user) => {
       IdEmpleado: user?.id || 0,   
       usuarioRegistro: user?.username || '',
       empleadoRegistro: user?.name || '',
-      idproducto:productData.idProducto
+      idproducto:productData.idProducto,
+      nombresucursal:productData.nombresucursal,
+            idsucursal: productData.idsucursal,                    // AGREGADO: id sucursal origen
+      idsucursal_destino: productData.idsucursal_destino,    // AGREGADO: id sucursal destino
+      sucursal_destino: productData.sucursal_destino ,       // AGREGADO: nombre sucursal destino
+          idsucursal_logueado: user?.sucursalId || 0,                   // NUEVO: id sucursal del usuario logueado
+      nombresucursal_logueado: user?.sucursalNombre || ''           // NUEVO: nombre sucursal del usuario logueado
     };
     
     console.log('Enviando datos:', JSON.stringify(bodyData, null, 2));

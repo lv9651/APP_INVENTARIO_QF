@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
 import { 
   View, Text, TextInput, TouchableOpacity, 
-  StyleSheet, Alert, ScrollView, ActivityIndicator 
+  StyleSheet, Alert, ScrollView, ActivityIndicator, BackHandler 
 } from 'react-native';
-import { getProductByBarcode, updateProduct,insertTomaInventario,getTomaInventarioByBarcode,actualizarTomaInventario  } from '../services/api';
+import { getTomaInventarioByBarcode, actualizarTomaInventario } from '../services/api';
 
 export default function EditProductScreen({ route, navigation }) {
-  const { barcode, isNew , user } = route.params || {};
+  const { barcode, isNew, user, esObligatorio } = route.params || {};
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [product, setProduct] = useState({
@@ -17,9 +17,34 @@ export default function EditProductScreen({ route, navigation }) {
     fechaFabricacion: '',
     fechaValidez: '',
     fechaRecepcion: '',
-     cant_Nueva: ''
-  
+    cant_Nueva: '',
+    codigobarra: '',
+    nombresucursal: '',
+    sucursal_destino: ''
   });
+
+  // Deshabilitar el botón de retroceder del celular si es obligatorio
+  useEffect(() => {
+    if (esObligatorio) {
+      // Deshabilitar el botón de retroceder del celular
+      const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+        Alert.alert(
+          'Atención',
+          'Debe guardar la cantidad antes de salir',
+          [{ text: 'OK' }]
+        );
+        return true; // Retorna true para evitar que navegue hacia atrás
+      });
+
+      // Deshabilitar el gesto de deslizar hacia atrás en iOS
+      navigation.setOptions({
+        headerLeft: () => null,
+        gestureEnabled: false,
+      });
+
+      return () => backHandler.remove();
+    }
+  }, [esObligatorio, navigation]);
 
   useEffect(() => {
     if (isNew) {
@@ -31,7 +56,10 @@ export default function EditProductScreen({ route, navigation }) {
         fechaFabricacion: '',
         fechaValidez: '',
         fechaRecepcion: '',
-        cant_Nueva: ''
+        cant_Nueva: '',
+        codigobarra: barcode || '',
+        nombresucursal: '',
+        sucursal_destino: ''
       });
       setLoading(false);
     } else {
@@ -54,6 +82,8 @@ export default function EditProductScreen({ route, navigation }) {
         fechaValidez: data.fechaValidez ? formatDate(data.fechaValidez) : '',
         fechaRecepcion: data.fechaRecepcion ? formatDate(data.fechaRecepcion) : '',
         codigobarra: data.codigobarra || barcode,
+        nombresucursal: data.nombresucursal || '',
+        sucursal_destino: data.sucursal_destino || '',
       });
     }
     setLoading(false);
@@ -64,33 +94,41 @@ export default function EditProductScreen({ route, navigation }) {
     const date = new Date(dateString);
     return date.toISOString().split('T')[0];
   };
-const handleSave = async () => {
-  setSaving(true);
-  
-  const nuevaCantidad = parseFloat(product.cant_Nueva) || 0;
-  
-  const result = await actualizarTomaInventario(product.codigobarra, nuevaCantidad);
-  
-  if (result.success) {
-    // Crear objeto con los datos actualizados
-    const productoActualizado = {
-      codigobarra: product.codigobarra,
-      descripcion: product.descripcion,
-      numLote: product.numLote,
-      cant_Nueva: nuevaCantidad,
-      cantExistencial: parseFloat(product.cantExistencial) || 0
-    };
+
+  const handleSave = async () => {
+    setSaving(true);
     
-    // Pasar los datos actualizados de vuelta
-    navigation.navigate('Inventory', { 
-      productoActualizado: productoActualizado,
-      actualizarLista: true
-    });
-  } else {
-    Alert.alert('Error', result.message);
-  }
-  setSaving(false);
-};
+    const nuevaCantidad = parseFloat(product.cant_Nueva) || 0;
+    
+    if (nuevaCantidad <= 0 && esObligatorio) {
+      Alert.alert('Atención', 'Debe ingresar una cantidad mayor a 0');
+      setSaving(false);
+      return;
+    }
+    
+    const result = await actualizarTomaInventario(product.codigobarra, nuevaCantidad);
+    
+    if (result.success) {
+      if (route.params?.onProductUpdated) {
+        route.params.onProductUpdated({
+          codigobarra: product.codigobarra,
+          cant_Nueva: nuevaCantidad
+        });
+      }
+      navigation.goBack();
+    } else {
+      Alert.alert('Error', result.message);
+    }
+    setSaving(false);
+  };
+
+  const handleCancel = () => {
+    if (esObligatorio) {
+      Alert.alert('Atención', 'Debe guardar la cantidad antes de salir');
+    } else {
+      navigation.goBack();
+    }
+  };
 
   if (loading) {
     return (
@@ -113,6 +151,24 @@ const handleSave = async () => {
           editable={false}
           placeholder="ID (automático)"
         />
+         <Text style={styles.label}>📝 Sucursal Origen</Text>
+        <TextInput
+          style={[styles.input, styles.textArea]}
+          value={product.nombresucursal}
+          onChangeText={(text) => setProduct({...product, nombresucursal: text})}
+          placeholder="Sucursal"
+          multiline
+          numberOfLines={3}
+        />
+           <Text style={styles.label}>📝 Sucursal Destino</Text>
+        <TextInput
+          style={[styles.input, styles.textArea]}
+          value={product.sucursal_destino}
+          onChangeText={(text) => setProduct({...product, sucursal_destino: text})}
+          placeholder="Sucursal"
+          multiline
+          numberOfLines={3}
+        />
 
         <Text style={styles.label}>📝 Descripción</Text>
         <TextInput
@@ -132,22 +188,16 @@ const handleSave = async () => {
           placeholder="Número de lote"
         />
 
-        <Text style={styles.label}>📦 Cantidad Existencial</Text>
-        <TextInput
-          style={styles.input}
-          value={product.cantExistencial}
-          onChangeText={(text) => setProduct({...product, cantExistencial: text})}
-          placeholder="Cantidad"
-          keyboardType="numeric"
-        />
-
-          <Text style={styles.label}>📦 Cantidad Nueva</Text>
+        {/* Campo Cantidad Existencial - OCULTO */}
+        
+        <Text style={styles.label}>📦 Cantidad Nueva</Text>
         <TextInput
           style={styles.input}
           value={product.cant_Nueva}
           onChangeText={(text) => setProduct({...product, cant_Nueva: text})}
           placeholder="Cantidad"
           keyboardType="numeric"
+          autoFocus={esObligatorio}
         />
 
         <Text style={styles.label}>🏭 Fecha de Fabricación</Text>
@@ -176,7 +226,7 @@ const handleSave = async () => {
       </View>
 
       <View style={styles.buttonRow}>
-        <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={() => navigation.goBack()}>
+        <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={handleCancel}>
           <Text style={styles.buttonText}>Cancelar</Text>
         </TouchableOpacity>
         

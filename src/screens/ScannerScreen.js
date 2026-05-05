@@ -1,12 +1,82 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { getProductByBarcode, insertTomaInventario } from '../services/api';
+import { getProductByBarcode, getTomaInventarioByBarcode, insertTomaInventario, validarPuedeEscanear } from '../services/api';
+
+// IDs de sucursales según tu negocio
+const SUCURSAL_QF_ALMACEN = 22;
+const SUCURSAL_ALMACEN_ORVIT = 67;
+const SUCURSAL_QF_CENTRAL = 18;
 
 export default function ScannerScreen({ onScan, onClose, navigation, user }) {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [inventarioActivo, setInventarioActivo] = useState(true);
+
+  // Función para calcular la sucursal destino según la regla de negocio
+  const calcularSucursalDestino = (user, productOrigenId, productOrigenNombre) => {
+  const userBranchId = user?.sucursalId;
+  const userBranchName = user?.sucursalNombre || '';
+  
+  console.log('Calculando sucursal destino:', {
+    userBranchId,
+    userBranchName,
+    productOrigenId,
+    productOrigenNombre
+  });
+  
+  // Caso 1: Usuario es QF ALMACEN (22) o ALMACEN ORVIT (67)
+  if (userBranchId === SUCURSAL_QF_ALMACEN || userBranchId === SUCURSAL_ALMACEN_ORVIT) {
+    // Si el producto tiene origen Q.F. CENTRAL (18)
+    if (productOrigenId === SUCURSAL_QF_CENTRAL || 
+        (productOrigenNombre && productOrigenNombre.toLowerCase().includes('qf central'))) {
+      console.log('Producto origen QF CENTRAL -> Asignando ALMACEN ORVIT');
+      return {
+        idsucursal_destino: SUCURSAL_ALMACEN_ORVIT,
+        sucursal_destino: 'ALMACEN ORVIT'
+      };
+    } else {
+      // Si NO es QF CENTRAL -> asignar el almacén/local que viene en el código de barra
+      console.log('Producto origen NO es QF CENTRAL -> Asignando el almacén del producto:', productOrigenNombre);
+      return {
+        idsucursal_destino: productOrigenId,      // ← usar el id del producto
+        sucursal_destino: productOrigenNombre     // ← usar el nombre del producto
+      };
+    }
+  } 
+  // Caso 2: Otra sucursal cualquiera
+  else {
+    console.log('Usuario es otra sucursal -> Asignando su propia sucursal:', userBranchName);
+    return {
+      idsucursal_destino: userBranchId,
+      sucursal_destino: userBranchName
+    };
+  }
+};
+
+  // Verificar estado del inventario al abrir el escáner
+  useEffect(() => {
+    const verificarEstado = async () => {
+      try {
+        const validacion = await validarPuedeEscanear();
+        console.log('Validación escaneo:', validacion);
+        
+        if (!validacion.permitido) {
+          setInventarioActivo(false);
+          Alert.alert(
+            '⛔ Inventario no disponible',
+            validacion.mensaje,
+            [{ text: 'OK', onPress: onClose }]
+          );
+        }
+      } catch (error) {
+        console.error('Error al verificar estado:', error);
+      }
+    };
+    
+    verificarEstado();
+  }, []);
 
   if (!permission) {
     return (
@@ -31,81 +101,101 @@ export default function ScannerScreen({ onScan, onClose, navigation, user }) {
   }
 
   const handleScan = async (result) => {
-  if (scanned || loading) return;
-  setScanned(true);
-  setLoading(true);
-  
-  const barcode = result.data;
-  console.log('Código escaneado:', barcode);
-  
-  try {
-    // 1. Obtener producto de la API de producción
-    const product = await getProductByBarcode(barcode);
-    
-    if (product) {
-
-      console.log(product);
-      // 2. Intentar guardar en tomaInventario
-      const saved = await insertTomaInventario(product, user);
-      
-      if (saved.success) {
-        Alert.alert(
-          '✅ Producto guardado',
-          `${product.descripcion}\nLote: ${product.numLote || 'N/A'}\nCantidad: ${product.cantExistencial || 0}`,
-          [
-            { text: 'OK', onPress: () => {
-              // Pasar el producto con la cantidad actual
-              onScan({
-                ...product,
-                cantExistencial: product.cantExistencial || 0
-              });
-              onClose();
-            }}
-          ]
-        );
-      } else {
-        // Si falla, puede ser que ya existe. Mostrar opción de editar
-        Alert.alert(
-          '⚠️ Producto ya existe',
-          `${product.descripcion}\n¿Desea editar la cantidad?`,
-          [
-            { text: 'Cancelar', onPress: () => setScanned(false) },
-            { text: 'Editar', onPress: () => {
-              onClose();
-              navigation.navigate('EditProduct', { 
-                barcode: barcode, 
-                isNew: false,
-                user: user
-              });
-            }}
-          ]
-        );
-      }
-    } else {
+    // VALIDAR que el inventario esté activo antes de escanear
+    if (!inventarioActivo) {
       Alert.alert(
-        '❌ Producto no encontrado',
-        `Código: ${barcode}\n¿Desea crear un nuevo producto?`,
-        [
-          { text: 'Cancelar', style: 'cancel', onPress: () => setScanned(false) },
-          { text: 'Crear', onPress: () => {
-            onClose();
-            navigation.navigate('EditProduct', { 
-              barcode: barcode, 
-              isNew: true,
-              user: user
-            });
-          }}
-        ]
+        '⛔ Inventario no disponible',
+        'El inventario no está activo para escanear.',
+        [{ text: 'OK', onPress: onClose }]
       );
+      return;
     }
-  } catch (error) {
-    console.error('Error:', error);
-    Alert.alert('Error', 'Error al procesar el producto');
-    setScanned(false);
-  } finally {
-    setLoading(false);
-  }
-};
+    
+    if (scanned || loading) return;
+    setScanned(true);
+    setLoading(true);
+    
+    const barcode = result.data;
+    console.log('Código escaneado:', barcode);
+    
+    try {
+      // Verificar si ya existe en tomaInventario
+      const existingProduct = await getTomaInventarioByBarcode(barcode);
+      console.log('Producto existente:', existingProduct);
+      
+      // Si el producto YA EXISTE - Solo mostrar mensaje, NO hacer nada más
+      if (existingProduct && existingProduct.codigobarra) {
+        console.log('Producto ya existe - Solo mostrar mensaje');
+        Alert.alert(
+          'ℹ️ Producto ya registrado',
+          `${existingProduct.descripcion}\nCantidad actual: ${existingProduct.cant_Nueva || 0}\n\nNo es necesario volver a escanear.`,
+          [{ text: 'OK', onPress: () => {
+            onClose();
+          }}]
+        );
+        return; // Salir sin agregar nada
+      }
+      
+      // Si llegamos aquí, el producto NO existe - Es NUEVO
+      console.log('Producto nuevo - Crear y abrir formulario');
+      
+      const product = await getProductByBarcode(barcode);
+      
+      if (product && product.codigobarra) {
+        // Obtener la sucursal origen del producto (de donde viene)
+        const productOrigenId = product.idsucursal || null;
+        const productOrigenNombre = product.nombresucursal || '';
+        
+        // Calcular la sucursal destino según la regla de negocio
+        const destino = calcularSucursalDestino(user, productOrigenId, productOrigenNombre);
+        
+        console.log('Sucursal destino calculada:', destino);
+        
+        // Agregar los campos de destino al producto antes de guardar
+        const productWithDestination = {
+          ...product,
+          idsucursal_destino: destino.idsucursal_destino,
+          sucursal_destino: destino.sucursal_destino
+        };
+        
+        const saved = await insertTomaInventario(productWithDestination, user);
+        
+        if (saved && saved.success) {
+          // Abrir formulario para ingresar cantidad del producto NUEVO
+          Alert.alert(
+            '✅ Producto nuevo',
+            `Producto: ${product.descripcion}\n🏢 Sucursal destino: ${destino.sucursal_destino}\n\nIngrese la cantidad.`,
+            [
+              { text: 'Ingresar Cantidad', onPress: () => {
+                navigation.navigate('EditProduct', { 
+                  barcode: barcode, 
+                  isNew: false,
+                  user: user,
+                  esObligatorio: true
+                });
+                onClose();
+              }}
+            ]
+          );
+        } else {
+          Alert.alert('Error', saved?.message || 'Error al guardar');
+          setScanned(false);
+        }
+      } else {
+        Alert.alert(
+          '❌ Producto no encontrado',
+          `Código: ${barcode}`
+        );
+        setScanned(false);
+      }
+    } catch (error) {
+      console.error('Error:', error);
+      Alert.alert('Error', 'Error al procesar el producto');
+      setScanned(false);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -125,7 +215,7 @@ export default function ScannerScreen({ onScan, onClose, navigation, user }) {
       </View>
       {loading && (
         <View style={styles.loadingOverlay}>
-          <Text style={styles.loadingText}>Guardando...</Text>
+          <Text style={styles.loadingText}>Procesando...</Text>
         </View>
       )}
     </View>
