@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://192.168.23.152:5236';
+const API_BASE_URL = 'http://apiqfventas.qf.com.pe';
 
 export const login = async (username, password) => {
   try {
@@ -108,11 +108,12 @@ export const getProductByBarcode = async (barcode) => {
 };
 
 
-export const actualizarTomaInventario = async (codigoBarra, cantNueva) => {
+export const actualizarTomaInventario = async (codigoBarra, cantNueva,ubicacion) => {
   try {
     const bodyData = {
       CodigoBarra: codigoBarra,
-      CantNueva: cantNueva
+      CantNueva: cantNueva,
+      ubicacion:ubicacion
     };
     
     console.log('Actualizando inventario:', bodyData);
@@ -191,6 +192,19 @@ export const getTomaInventarioByBarcode = async (barcode) => {
   }
 };
 
+export const getTomaInventarioByBarcodeAndUbicacion = async (barcode, ubicacion) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/Etiqueta/obtener_infoinventarioubicacion/${barcode}/${ubicacion}`);
+    if (!response.ok) return null;
+    const text = await response.text();
+    if (!text || text.trim() === '') return null;
+    return JSON.parse(text);
+  } catch (error) {
+    console.error('Error:', error);
+    return null;
+  }
+};
+
 export const eliminarTomaInventario = async (idtomainventario) => {
   try {
     const response = await fetch(`${API_BASE_URL}/api/Etiqueta/eliminar_tomainventario`, {
@@ -229,7 +243,7 @@ export const getInventarioEstado = async () => {
 };
 
 // Iniciar inventario (solo ADMIN)
-export const iniciarInventario = async (tipo, usuario) => {
+export const iniciarInventario = async (tipo, usuario,idsucursal) => {
   try {
     const response = await fetch(`${API_BASE_URL}/api/Etiqueta/iniciar-inventario`, {
       method: 'POST',
@@ -238,7 +252,8 @@ export const iniciarInventario = async (tipo, usuario) => {
       },
       body: JSON.stringify({
         tipo: tipo,
-        usuario: usuario
+        usuario: usuario,
+     idsucursal: String(idsucursal || '')
       })
     });
     
@@ -252,24 +267,37 @@ export const iniciarInventario = async (tipo, usuario) => {
 };
 
 // Finalizar inventario (solo ADMIN)
-export const finalizarInventario = async (usuario) => {
+export const finalizarInventario = async (idEmpleado, idaperturainventario) => {
   try {
+    console.log('📡 Enviando finalizar:', { idEmpleado, idaperturainventario });
+    
     const response = await fetch(`${API_BASE_URL}/api/Etiqueta/finalizar-inventario`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Accept': 'application/json'
       },
       body: JSON.stringify({
-        usuario: usuario
+        usuario: idEmpleado,
+        idaperturainventario: idaperturainventario  // ✅ SOLO EL ID
       })
     });
     
     const result = await response.json();
-    console.log('Finalizar inventario respuesta:', result);
-    return result;
+    console.log('✅ Resultado finalizar:', result);
+    
+    return {
+      success: result.success === true || result.Success === true || result.Success === 1,
+      estado: result.estado || result.Estado || 'FINALIZADO',
+      mensaje: result.mensaje || result.Message || result.message || 'Inventario finalizado'
+    };
+    
   } catch (error) {
-    console.error('Error al finalizar:', error);
-    return { success: false, message: error.message };
+    console.error('Error finalizando inventario:', error);
+    return { 
+      success: false, 
+      message: error.message || 'Error al conectar con el servidor' 
+    };
   }
 };
 
@@ -289,33 +317,32 @@ export const validarPuedeEscanear = async () => {
 
 
 
-
-
-
-export const insertTomaInventario = async (productData, user) => {
+export const insertTomaInventario = async (productData, user,idaperturainventario = null) => {
   try {
     const bodyData = {
       CodigoBarra: productData.codigobarra,
-      descripcion: productData.descripcion,
-      numLote: productData.numLote,
-      cantExistencial: productData.cantExistencial,
-      fechaFabricacion: productData.fechaFabricacion,
-      fechaValidez: productData.fechaValidez,
-      fechaRecepcion: productData.fechaRecepcion,
-      IdEmpleado: user?.id || 0,   
-      usuarioRegistro: user?.username || '',
-      empleadoRegistro: user?.name || '',
-      idproducto:productData.idProducto,
-      nombresucursal:productData.nombresucursal,
-            idsucursal: productData.idsucursal,                    // AGREGADO: id sucursal origen
-      idsucursal_destino: productData.idsucursal_destino,    // AGREGADO: id sucursal destino
-      sucursal_destino: productData.sucursal_destino ,       // AGREGADO: nombre sucursal destino
-          idsucursal_logueado: user?.sucursalId || 0,                   // NUEVO: id sucursal del usuario logueado
-      nombresucursal_logueado: user?.sucursalNombre || ''           // NUEVO: nombre sucursal del usuario logueado
+      Descripcion: productData.descripcion,
+      NumLote: productData.numLote,
+      CantExistencial: productData.cantExistencial || 0,
+      FechaFabricacion: productData.fechaFabricacion,
+      FechaValidez: productData.fechaValidez,
+      FechaRecepcion: productData.fechaRecepcion,
+      IdEmpleado: user?.id || 0,
+      UsuarioRegistro: user?.username || '',
+      EmpleadoRegistro: user?.name || '',
+      idproducto: productData.idProducto,
+      nombresucursal: productData.nombresucursal,
+      idsucursal: productData.idsucursal,
+      idsucursal_destino: productData.idsucursal_destino,
+      sucursal_destino: productData.sucursal_destino,
+      idsucursal_logueado: user?.sucursalId || 0,
+      nombresucursal_logueado: user?.sucursalNombre || '',
+      ubicacion: productData.ubicacion,
+      Cant_nueva: productData.cant_Nueva || 0,
+      idaperturainventario: idaperturainventario  
     };
     
-    console.log('Enviando datos:', JSON.stringify(bodyData, null, 2));
-    console.log('pro:', JSON.stringify(productData, null, 2));
+    console.log('📤 Enviando datos:', JSON.stringify(bodyData, null, 2));
     
     const response = await fetch(`${API_BASE_URL}/api/Etiqueta/insertar_tomainventario`, {
       method: 'POST',
@@ -326,27 +353,57 @@ export const insertTomaInventario = async (productData, user) => {
       body: JSON.stringify(bodyData)
     });
     
-    console.log('Response status:', response.status);
-    console.log('Response headers:', response.headers.get('content-type'));
+    console.log('📊 Response status:', response.status);
     
-    // Leer como texto primero
+    // Leer la respuesta como texto
     const text = await response.text();
-    console.log('Respuesta cruda:', text);
+    console.log('📥 Respuesta CRUDA del servidor:', text);
     
+    // Si la respuesta está vacía
     if (!text || text.trim() === '') {
-      return { success: false, message: 'Respuesta vacía del servidor' };
+      console.log('❌ Respuesta vacía');
+      return { 
+        Success: 0,
+        success: false, 
+        Message: 'El servidor devolvió una respuesta vacía',
+        message: 'El servidor devolvió una respuesta vacía'
+      };
     }
     
-    const result = JSON.parse(text);
-    console.log('Respuesta parseada:', result);
+    // Intentar parsear como JSON
+    let result;
+    try {
+      result = JSON.parse(text);
+      console.log('✅ JSON parseado:', result);
+    } catch (parseError) {
+      console.error('❌ Error parseando JSON:', parseError);
+      console.log('📄 Texto que no es JSON:', text);
+      
+      // Devolver un objeto con el error
+      return {
+        Success: 0,
+        success: false,
+        Message: text.substring(0, 200), // Enviar el texto de error
+        message: text.substring(0, 200)
+      };
+    }
     
+    // Devolver el resultado con ambos formatos (mayúscula y minúscula)
     return {
+      Success: result.Success === 1 ? 1 : 0,
       success: result.Success === 1,
-      message: result.Message,
-      id: result.IdTomaInventario
+      Message: result.Message || result.message || (result.Success === 1 ? 'Producto insertado' : 'Error al insertar'),
+      message: result.Message || result.message || (result.Success === 1 ? 'Producto insertado' : 'Error al insertar'),
+      IdTomaInventario: result.IdTomaInventario || result.id
     };
+    
   } catch (error) {
-    console.error('Error detallado:', error);
-    return { success: false, message: error.message };
+    console.error('❌ Error en insertTomaInventario:', error);
+    return { 
+      Success: 0,
+      success: false, 
+      Message: error.message,
+      message: error.message
+    };
   }
 };

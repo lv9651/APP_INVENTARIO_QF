@@ -59,7 +59,7 @@ export default function LoginScreen({ navigation }) {
         sucursalId: sucursalSeleccionada.idsucursal,
         sucursalNombre: sucursalSeleccionada.nombreSucursal
       };
-      navigation.replace('Inventory', { user: userWithBranch });
+      navigation.replace('SelectInventory', { user: userWithBranch });
     } else {
       Alert.alert('Error', result.message);
     }

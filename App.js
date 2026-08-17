@@ -3,6 +3,7 @@ import { createStackNavigator } from '@react-navigation/stack';
 import LoginScreen from './src/screens/LoginScreen';
 import InventoryScreen from './src/screens/InventoryScreen';
 import EditProductScreen from './src/screens/EditProductScreen';
+import SelectInventoryScreen from './src/screens/SelectInventoryScreen'; 
 
 const Stack = createStackNavigator();
 
@@ -11,6 +12,7 @@ export default function App() {
     <NavigationContainer>
       <Stack.Navigator initialRouteName="Login">
         <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
+             <Stack.Screen name="SelectInventory" component={SelectInventoryScreen} options={{ title: '📋 Inventario Activo' }} />
         <Stack.Screen name="Inventory" component={InventoryScreen} options={{ title: 'Inventario ORVIT' }} />
         <Stack.Screen name="EditProduct" component={EditProductScreen} options={{ title: '✏️ Editar Producto' }} />
       </Stack.Navigator>

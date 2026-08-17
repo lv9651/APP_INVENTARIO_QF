@@ -6,7 +6,6 @@ import * as XLSX from 'xlsx';
 import ScannerScreen from './ScannerScreen';
 import { 
   getTomaInventario, 
-  getInventarioEstado,
   iniciarInventario,
   finalizarInventario,
   eliminarTomaInventario  
@@ -28,31 +27,36 @@ export default function InventoryScreen({ navigation, route }) {
   const [loadingAccion, setLoadingAccion] = useState(false);
   
   const user = route.params?.user;
+const inventarioActivo = route.params?.inventarioActivo;
+const sucursalInventario = inventarioActivo?.nombre_sucursal_inventario || '';
+const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
+  const crearNuevo = route.params?.crearNuevo || false;
   
   // Verificar si es ADMINISTRADOR por el ROLE
   const isAdmin = user?.role === 'ADMINISTRADOR';
 
-  // CARGAR ESTADO DEL INVENTARIO DESDE EL SERVIDOR
-  const cargarEstadoInventario = async () => {
-    try {
-      const data = await getInventarioEstado();
-      console.log('Estado desde servidor:', data);
-      
-      setInventarioEstado(data.estado || 'PENDIENTE');
-      setTipoInventario(data.tipo || 'PARCIAL');
-      
-      if (data.fecha_inicio) {
-        setFechaInicioInventario(data.fecha_inicio);
+  // ============================================
+  // CARGAR ESTADO DEL INVENTARIO
+  // ============================================
+  const cargarEstadoInventario = () => {
+    if (inventarioActivo) {
+      // Si venimos de SelectInventoryScreen con un inventario activo
+      setInventarioEstado(inventarioActivo.estado || 'INICIADO');
+      setTipoInventario(inventarioActivo.tipo || 'PARCIAL');
+      if (inventarioActivo.fecha_inicio) {
+        setFechaInicioInventario(inventarioActivo.fecha_inicio);
       }
-      if (data.fecha_fin) {
-        setFechaFinInventario(data.fecha_fin);
+      if (inventarioActivo.fecha_fin) {
+        setFechaFinInventario(inventarioActivo.fecha_fin);
       }
-    } catch (error) {
-      console.error('Error cargando estado:', error);
+    } else if (crearNuevo) {
+      // Si venimos a crear un nuevo inventario
+      setInventarioEstado('PENDIENTE');
+      setTipoInventario('PARCIAL');
     }
   };
 
-  // Cargar estado al montar el componente
+  // Cargar estado al montar
   useEffect(() => {
     cargarEstadoInventario();
   }, []);
@@ -66,40 +70,59 @@ export default function InventoryScreen({ navigation, route }) {
   );
 
   const loadProducts = async () => {
-    setIsLoading(true);
-    try {
-      let productos;
-      if (viewMode === 'mis') {
-        productos = await getTomaInventario(user?.id);
-        console.log('Mis productos:', productos);
-      } else if (isAdmin) {
-        productos = await getTomaInventario();
-        console.log('Todos los productos:', productos);
-      }
+  setIsLoading(true);
+  try {
+    let productos;
+    const esAdmin = user?.role === 'ADMINISTRADOR';
+    
+    const inventarioActivo = route.params?.inventarioActivo;
+    const idaperturainventario = inventarioActivo?.idaperturainventario || inventarioActivo?.id || null;
+    
+    console.log('📦 Cargando productos - Admin:', esAdmin);
+    console.log('📦 idaperturainventario:', idaperturainventario);
+    
+    if (viewMode === 'mis') {
+      productos = await getTomaInventario(user?.id);
+      console.log('Mis productos:', productos?.length || 0);
+    } else if (esAdmin) {
+      const todos = await getTomaInventario();
+      console.log('Todos los productos (sin filtrar):', todos?.length || 0);
       
-      if (productos && productos.length > 0) {
-        const itemsList = productos.map(prod => ({
-           idTomaInventario: prod.idTomaInventario, 
-          codigobarra: prod.codigoBarra,
-          name: prod.descripcion,
-          lote: prod.numLote || 'N/A',
-          cantidad_nueva: prod.cant_Nueva || 0,
-          usuario: prod.empleadoRegistro || prod.usuarioRegistro || 'Usuario',
-          fecha_edicion: prod.fechaActualizacion ? new Date(prod.fechaActualizacion).toLocaleString() : new Date().toLocaleString(),
-          nombresucursal:prod.nombresucursal,
-           sucursal_destino: prod.sucursal_destino || 'N/A'
-        }));
-        setItems(itemsList);
+      // ✅ FILTRAR SOLO POR idaperturainventario
+      if (idaperturainventario) {
+        productos = todos.filter(prod => prod.idaperturainventario === idaperturainventario);
+        console.log('📦 Productos filtrados por idaperturainventario:', productos?.length || 0);
       } else {
-        setItems([]);
+        productos = todos;
+        console.log('📦 Mostrando TODOS los productos (sin filtro)');
       }
-    } catch (error) {
-      console.error('Error cargando productos:', error);
-    } finally {
-      setIsLoading(false);
     }
-  };
-
+    
+    if (productos && productos.length > 0) {
+      const itemsList = productos.map(prod => ({
+        idTomaInventario: prod.idTomaInventario,
+        codigobarra: prod.codigoBarra,
+        name: prod.descripcion,
+        lote: prod.numLote || 'N/A',
+        cantidad_nueva: prod.cant_Nueva || 0,
+        usuario: prod.empleadoRegistro || prod.usuarioRegistro || 'Usuario',
+        fecha_edicion: prod.fechaActualizacion ? new Date(prod.fechaActualizacion).toLocaleString() : new Date().toLocaleString(),
+        nombresucursal: prod.nombresucursal,
+        sucursal_destino: prod.sucursal_destino || 'N/A',
+        ubicacion: prod.ubicacion || 'N/A',
+        idproducto: prod.idProducto || 0,
+        idaperturainventario: prod.idaperturainventario,
+      }));
+      setItems(itemsList);
+    } else {
+      setItems([]);
+    }
+  } catch (error) {
+    console.error('Error cargando productos:', error);
+  } finally {
+    setIsLoading(false);
+  }
+};
   // Actualizar la lista cuando se edita un producto
   useEffect(() => {
     if (route.params?.productoActualizado && route.params?.actualizarLista) {
@@ -110,7 +133,8 @@ export default function InventoryScreen({ navigation, route }) {
           item.codigobarra === productoEditado.codigobarra
             ? { 
                 ...item, 
-                cantidad_nueva: productoEditado.cant_Nueva 
+                cantidad_nueva: productoEditado.cant_Nueva ,
+                ubicacion:productoEditado.ubicacion
               }
             : item
         )
@@ -140,7 +164,9 @@ export default function InventoryScreen({ navigation, route }) {
     
     Alert.alert(
       'Iniciar Inventario',
-      `¿Está seguro de INICIAR el inventario ${tipoInventario === 'TOTAL' ? 'TOTAL' : 'PARCIAL'}?\n\n⚠️ Una vez iniciado, todos los usuarios podrán escanear productos.`,
+      `¿Está seguro de INICIAR el inventario ${tipoInventario === 'TOTAL' ? 'TOTAL' : 'PARCIAL'}?\n\n` +
+      `🏢 Sucursal: ${user?.sucursalNombre || 'N/A'}\n\n` +
+      `⚠️ Una vez iniciado, todos los usuarios podrán escanear productos.`,
       [
         { text: 'Cancelar', style: 'cancel' },
         { 
@@ -148,8 +174,12 @@ export default function InventoryScreen({ navigation, route }) {
           onPress: async () => {
             setLoadingAccion(true);
             try {
-              const result = await iniciarInventario(tipoInventario, String(user?.id));
-              
+              const result = await iniciarInventario(
+                tipoInventario, 
+                String(user?.id), 
+                String(user?.sucursalId || '')
+              );
+              console.log(user?.sucursalId);
               if (result.success) {
                 setInventarioEstado('INICIADO');
                 setFechaInicioInventario(new Date().toLocaleString());
@@ -170,41 +200,55 @@ export default function InventoryScreen({ navigation, route }) {
     );
   };
 
-  const handleFinalizarInventario = () => {
-    const totalUnits = items.reduce((sum, i) => sum + (i.cantidad_nueva || 0), 0);
-    
-    Alert.alert(
-      'Finalizar Inventario',
-      `¿Está seguro de FINALIZAR el inventario?\n\n📋 Tipo: ${tipoInventario === 'TOTAL' ? 'INVENTARIO TOTAL' : 'INVENTARIO PARCIAL'}\n📦 Productos registrados: ${items.length}\n📊 Unidades totales: ${totalUnits}\n\n⚠️ Después de finalizar, NO se podrán agregar más productos.`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        { 
-          text: 'Finalizar', 
-          style: 'destructive',
-          onPress: async () => {
-            setLoadingAccion(true);
-            try {
-              const result = await finalizarInventario(String(user?.id));
-        
-              if (result.success) {
-                setInventarioEstado('FINALIZADO');
-                setFechaFinInventario(new Date().toLocaleString());
-                Alert.alert('✅ Éxito', result.mensaje || `Inventario finalizado correctamente.\n\nProductos: ${items.length}\nUnidades: ${totalUnits}`);
-              } else {
-                Alert.alert('Error', result.message || 'No se pudo finalizar el inventario');
-              }
-            } catch (error) {
-              console.error('Error:', error);
-              Alert.alert('Error', 'No se pudo finalizar el inventario');
-            } finally {
-              setLoadingAccion(false);
+ const handleFinalizarInventario = () => {
+  const totalUnits = items.reduce((sum, i) => sum + (i.cantidad_nueva || 0), 0);
+  
+  // ✅ OBTENER EL ID DEL INVENTARIO
+  const inventarioActivo = route.params?.inventarioActivo;
+  const idaperturainventario = inventarioActivo?.idaperturainventario || inventarioActivo?.id || null;
+  
+  if (!idaperturainventario) {
+    Alert.alert('Error', 'No se pudo identificar el inventario');
+    return;
+  }
+  
+  Alert.alert(
+    'Finalizar Inventario',
+    `¿Está seguro de FINALIZAR el inventario?\n\n📋 Tipo: ${tipoInventario === 'TOTAL' ? 'INVENTARIO TOTAL' : 'INVENTARIO PARCIAL'}\n📦 Productos registrados: ${items.length}\n📊 Unidades totales: ${totalUnits}\n\n⚠️ Después de finalizar, NO se podrán agregar más productos.`,
+    [
+      { text: 'Cancelar', style: 'cancel' },
+      { 
+        text: 'Finalizar', 
+        style: 'destructive',
+        onPress: async () => {
+          setLoadingAccion(true);
+          try {
+            console.log('🏁 Finalizando inventario ID:', idaperturainventario);
+            
+            const result = await finalizarInventario(
+              String(user?.id),
+              idaperturainventario  // ✅ SOLO EL ID
+            );
+            
+            if (result && result.success) {
+              setInventarioEstado('FINALIZADO');
+              setFechaFinInventario(new Date().toLocaleString());
+              Alert.alert('✅ Éxito', result.mensaje || 'Inventario finalizado correctamente');
+              navigation.replace('SelectInventory', { user: user });
+            } else {
+              Alert.alert('❌ Error', result?.mensaje || result?.message || 'No se pudo finalizar');
             }
+          } catch (error) {
+            console.error('Error:', error);
+            Alert.alert('❌ Error', error?.message || 'Error al finalizar');
+          } finally {
+            setLoadingAccion(false);
           }
         }
-      ]
-    );
-  };
-
+      }
+    ]
+  );
+};
   const addItem = (product) => {
     // VALIDAR si el inventario está INICIADO
     if (inventarioEstado !== 'INICIADO') {
@@ -231,21 +275,23 @@ export default function InventoryScreen({ navigation, route }) {
       Alert.alert('Éxito', `Cantidad actualizada a: ${product.cant_Nueva || 0}`);
     } else {
       const newItem = {
-        idTomaInventario: product.idTomaInventario || saved?.id, 
+        idTomaInventario: product.idTomaInventario, 
         codigobarra: barcodeValue,
         name: product.descripcion,
         lote: product.numLote || 'N/A',
         cantidad_nueva: product.cant_Nueva || 0,
         fecha_edicion: new Date().toLocaleString(),
         usuario: user?.empleado || user?.name || user?.username || 'Usuario',
-             nombresucursal: product.nombresucursal || 'N/A' ,
-                sucursal_destino: product.sucursal_destino || 'N/A' // ← AGREGAR ESTA LÍNEA
-
+        nombresucursal: product.nombresucursal || user?.sucursalNombre || 'N/A',
+        sucursal_destino: product.sucursal_destino || user?.sucursalId || 'N/A',
+        ubicacion: product.ubicacion || 'N/A',
+        idproducto: product.idProducto || 0,
       };
       setItems([...items, newItem]);
       Alert.alert('Éxito', 'Producto agregado');
     }
   };
+  
   const deleteItem = async (item) => {
   console.log('Estado del inventario:', inventarioEstado);
   console.log('Item a eliminar:', item);
@@ -290,15 +336,16 @@ export default function InventoryScreen({ navigation, route }) {
     try {
       const data = items.map((item, index) => ({
         '#': index + 1,
+        'idproducto': item.idproducto,
         'Codigo_Barras': item.codigobarra,
         'Producto': item.name,
         'Lote': item.lote,
         'Cantidad_Nueva': item.cantidad_nueva,
         'Usuario': item.usuario,
-        'Sucursal':item.nombresucursal,
         'Fecha_Edicion': item.fecha_edicion,
-         'Tipo_Inventario': tipoInventario || 'N/A',
-         'sucursal_destino':item.sucursal_destino || 'N/A'
+        'Tipo_Inventario': tipoInventario || 'N/A',
+        'sucursal_destino':item.sucursal_destino || 'N/A',
+        'ubicacion':item.ubicacion || 'N/A'
       }));
 
       const ws = XLSX.utils.json_to_sheet(data);
@@ -339,21 +386,21 @@ export default function InventoryScreen({ navigation, route }) {
   }
 
   if (showScanner) {
-    return <ScannerScreen onScan={addItem} onClose={() => setShowScanner(false)} navigation={navigation} user={user} />;
+     console.log('📤 Enviando a Scanner - inventarioActivo:', inventarioActivo);
+  console.log('📤 Enviando a Scanner - idaperturainventario:', inventarioActivo?.id);
+    return <ScannerScreen onScan={addItem} onClose={() => setShowScanner(false)} navigation={navigation} user={user}     idaperturainventario={inventarioActivo?.idaperturainventario  || null} />;
   }
 
   return (
     <View style={styles.container}>
+      {/* HEADER */}
       <View style={styles.header}>
         <View>
           <Text style={styles.userName}>👤 {user?.empleado || user?.name || user?.username || 'Usuario'}</Text>
           <Text style={styles.userRole}>📛 Rol: {user?.role || 'Sin rol'}</Text>
-              {/* MOSTRAR SUCURSAL LOGUEADA */}
-    {user?.sucursalNombre && (
-      <Text style={styles.sucursalLogueado}>🏢 Sucursal: {user.sucursalNombre}</Text>
-    )}
-      
-      
+          {user?.sucursalNombre && (
+            <Text style={styles.sucursalLogueado}>🏢 Sucursal: {user.sucursalNombre}</Text>
+          )}
         </View>
         <TouchableOpacity onPress={() => navigation.replace('Login')}>
           <Text style={styles.logoutText}>🚪 Salir</Text>
@@ -487,7 +534,10 @@ export default function InventoryScreen({ navigation, route }) {
           <Text style={styles.statNumber}>{items.length}</Text>
           <Text style={styles.statLabel}>Productos</Text>
         </View>
-      
+        <View style={styles.statBox}>
+          <Text style={styles.statNumber}>{totalUnits}</Text>
+          <Text style={styles.statLabel}>Unidades</Text>
+        </View>
       </View>
       
       <FlatList
@@ -509,6 +559,7 @@ export default function InventoryScreen({ navigation, route }) {
                   onPress={() => {
                     navigation.navigate('EditProduct', { 
                       barcode: item.codigobarra,
+                      ubicacion:item.ubicacion ,
                       isNew: false,
                       user: user
                     });
@@ -517,12 +568,12 @@ export default function InventoryScreen({ navigation, route }) {
                   <Text style={styles.editText}>✏️ Editar</Text>
                 </TouchableOpacity>
                 
-          <TouchableOpacity 
-  style={styles.deleteButton}
-  onPress={() => deleteItem(item)}  // ← pasar item completo, no solo barcode y name
->
-  <Text style={styles.deleteText}>🗑️ Eliminar</Text>
-</TouchableOpacity>
+                <TouchableOpacity 
+                  style={styles.deleteButton}
+                  onPress={() => deleteItem(item)}
+                >
+                  <Text style={styles.deleteText}>🗑️ Eliminar</Text>
+                </TouchableOpacity>
               </View>
             </View>
           </View>
@@ -571,8 +622,7 @@ const styles = StyleSheet.create({
   },
   userName: { fontSize: 14, fontWeight: 'bold', color: '#2c3e50' },
   userRole: { fontSize: 12, color: '#7f8c8d', marginTop: 2 },
-  sessionText: { fontSize: 9, color: '#95a5a6', marginTop: 2 },
-  dateText: { fontSize: 9, color: '#95a5a6', marginTop: 2 },
+  sucursalLogueado: { fontSize: 12, color: '#3498db', marginTop: 2 },
   logoutText: { color: '#e74c3c', fontWeight: 'bold', fontSize: 12 },
   
   // Estilos para Panel de Admin
