@@ -1,4 +1,8 @@
-const API_BASE_URL = 'http://apiqfventas.qf.com.pe';
+import { createWebModule } from "expo-modules-core";
+import * as FileSystem from 'expo-file-system';
+
+//const API_BASE_URL = 'http://apiqfventas.qf.com.pe';
+const API_BASE_URL = 'http://apiws.qf.com.pe';
 
 export const login = async (username, password) => {
   try {
@@ -407,3 +411,423 @@ export const insertTomaInventario = async (productData, user,idaperturainventari
     };
   }
 };
+
+export const obtenerProductoInfoByCodigoBarras = async (codigoBarras) => {
+  try {
+    if (!codigoBarras) return null;
+    const cleanCode = encodeURIComponent(String(codigoBarras).trim());
+    const response = await fetch(`${API_BASE_URL}/api/Inventario/obtenerProductoInfoByCodigoBarras/${cleanCode}`);
+
+    if (!response.ok) {
+      console.warn(`[DROGUERIA] HTTP ${response.status} al obtener info para código: ${codigoBarras}`);
+      return null;
+    }
+
+    const result = await response.json();
+    console.log('[DROGUERIA] Producto obtenido:', result);
+    return result;
+  } catch (error) {
+    console.error("❌ [DROGUERIA] Error al obtener información de Producto:", error);
+    return null;
+  }
+};
+
+export const obtenerLotesProductoByCodigoBarra = async (codigoBarras) => {
+  try {
+    if (!codigoBarras) return null;
+    const cleanCode = encodeURIComponent(String(codigoBarras).trim());
+    const response = await fetch(`${API_BASE_URL}/api/Inventario/obtenerLotesProductoByCodigoBarra/${cleanCode}`);
+
+    if (!response.ok) {
+      console.warn(`[DROGUERIA] HTTP ${response.status} al obtener lotes para código: ${codigoBarras}`);
+      return null;
+    }
+
+    const result = await response.json();
+    console.log('[DROGUERIA] Lotes obtenido:', result);
+    return result;
+  } catch (error) {
+    console.error("❌ [DROGUERIA] Error al obtener lotes de Producto:", error);
+    return null;
+  }
+};
+
+export const insertProductoInventariadoDrogueria = async (productData, user, idaperturainventario = null) => {
+  try {
+    const idAperturaParsed = idaperturainventario !== null && idaperturainventario !== undefined && !isNaN(Number(idaperturainventario))
+      ? Number(idaperturainventario)
+      : (productData.idaperturainventario && !isNaN(Number(productData.idaperturainventario)) ? Number(productData.idaperturainventario) : null);
+
+    const bodyData = {
+      CodigoBarra: productData.codigobarra || productData.codigoBarras || productData.CodigoBarra,
+      idproducto: productData.idProducto || productData.idproducto,
+      Descripcion: productData.NombreProducto || productData.descripcion || productData.Descripcion || '',
+      idlaboratorio: productData.idlaboratorio,
+      laboratorio: productData.laboratorio,
+      precioc: productData.precioc,
+      idproductolote: productData.idproductolote,
+      NumLote: productData.numLote || productData.numeroLote || productData.NumLote,
+      fecharecepcion: productData.fecharecepcion,
+      fechavalidez: productData.fechavalidez,
+      fechafabricacion: productData.fechafabricacion,
+      CantExistencial: productData.cantExistencial || productData.cantidadExistencial || productData.CantExistencial || 0,
+      Cant_nueva: productData.cant_Nueva || productData.cantNueva || productData.Cant_nueva || 0,
+      IdEmpleado: user?.id || 0,
+      UsuarioRegistro: user?.username || '',
+      EmpleadoRegistro: user?.name || user?.empleado || '',
+      idsucursal: productData.idsucursal,
+      nombresucursal: productData.nombresucursal,
+      idsucursal_logueado: user?.sucursalId || 0,
+      nombresucursal_logueado: user?.sucursalNombre || '',
+      idaperturainventario: idAperturaParsed  
+    };
+    
+    console.log('📤 [DROGUERIA] Enviando datos:', JSON.stringify(bodyData, null, 2));
+    
+    const response = await fetch(`${API_BASE_URL}/api/Inventario/insertProductoInventariadoDrogueria`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(bodyData)
+    });
+    
+    console.log('📊 [DROGUERIA] Response status:', response.status);
+    
+    // Leer la respuesta como texto
+    const text = await response.text();
+    console.log('📥 [DROGUERIA] Respuesta CRUDA del servidor:', text);
+    
+    // Si la respuesta está vacía
+    if (!text || text.trim() === '') {
+      console.log('❌ [DROGUERIA] Respuesta vacía');
+      return { 
+        success: false, 
+        message: 'El servidor devolvió una respuesta vacía'
+      };
+    }
+    
+    // Intentar parsear como JSON
+    let result;
+    try {
+      result = JSON.parse(text);
+      console.log('✅ [DROGUERIA] JSON parseado:', result);
+    } catch (parseError) {
+      console.error('❌ [DROGUERIA] Error parseando JSON:', parseError);
+      console.log('📄 [DROGUERIA] Texto que no es JSON:', text);
+      
+      // Devolver un objeto con el error
+      return {
+        success: false,
+        message: text.substring(0, 200)
+      };
+    }
+    
+    return {
+      success: result.success === 1 || result.success === true,
+      message: result.message
+    };
+  } catch (error){
+    return { 
+        success: false, 
+        message: "Ocurrio un error en el servidor"
+      };
+  }
+}
+
+export const obtenerProductoInventariadoDrogueria = async (codigoBarra, idaperturainventario = null) => {
+  try {
+    if (!codigoBarra) return null;
+    const cleanCode = encodeURIComponent(String(codigoBarra).trim());
+    let url = `${API_BASE_URL}/api/Inventario/obtenerProductoInventariadoDrogueria/${cleanCode}`;
+    if (idaperturainventario !== null && idaperturainventario !== undefined) {
+      url += `?idaperturainventario=${idaperturainventario}`;
+    }
+    const response = await fetch(url);
+    console.log(`Status de obtencion de inventario de drogueria: ${response.ok}`);
+    if (!response.ok) return null;
+    const text = await response.text();
+    if (!text || text.trim() === '') return null;
+    return JSON.parse(text);
+
+  } catch (error) {
+    console.error(`[DROGUERIA] Error al obtener Inventariado de Producto, Codigo Barras ${codigoBarra}:`, error);
+    return null;
+  }
+};
+
+export const updateProductoInventariadoDrogueria = async (codigoBarra, idproductolote, cantNueva, idaperturainventario = null) => {
+  try {
+    const idAperturaParsed = idaperturainventario !== null && idaperturainventario !== undefined && !isNaN(Number(idaperturainventario))
+      ? Number(idaperturainventario)
+      : null;
+
+    const bodyData = {
+      CodigoBarra: codigoBarra,
+      idproductolote: idproductolote,
+      CantNueva: cantNueva,
+      idaperturainventario: idAperturaParsed
+    };
+    
+    console.log('[DROGUERIA] Actualizando inventario:', bodyData);
+    
+    const response = await fetch(`${API_BASE_URL}/api/Inventario/updateProductoInventariadoDrogueria`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(bodyData)
+    });
+    
+    const result = await response.json();
+    console.log('[DROGUERIA] Respuesta actualizar:', result);
+    
+    return {
+      success: response.ok,
+      message: result.mensaje || (response.ok ? 'Actualizado correctamente' : 'Error al actualizar')
+    };
+  } catch (error) {
+    console.error('[DROGUERIA] Error:', error);
+    return { success: false, message: error.message };
+  }
+};
+
+export const obtenerTodosProductoInventariadoDrogueria = async (idEmpleado = null, idaperturainventario = null) => {
+  try {
+    let url = `${API_BASE_URL}/api/Inventario/obtenerTodosProductoInventariadoDrogueria`;
+    const params = [];
+    if (idEmpleado !== null && idEmpleado !== undefined) {
+      params.push(`idEmpleado=${idEmpleado}`);
+    }
+    if (idaperturainventario !== null && idaperturainventario !== undefined) {
+      params.push(`idaperturainventario=${idaperturainventario}`);
+    }
+    if (params.length > 0) {
+      url += `?${params.join('&')}`;
+    }
+    const response = await fetch(url);
+    const result = await response.json();
+    return result.data || [];
+  } catch (error) {
+    console.error('Error al obtener Inventariado de Productos (DROGUERIA):', error);
+    return [];
+  }
+};
+
+export const eliminarProductoInventariadoDrogueria = async (codigoBarra, idaperturainventario = null) => {
+  try {
+    const idAperturaParsed = idaperturainventario !== null && idaperturainventario !== undefined && !isNaN(Number(idaperturainventario))
+      ? Number(idaperturainventario)
+      : null;
+
+    const bodyData = { 
+      CodigoBarra: codigoBarra,
+      idaperturainventario: idAperturaParsed
+    };
+
+    console.log('[DROGUERIA] Eliminando inventario producto:', bodyData);
+
+    const response = await fetch(`${API_BASE_URL}/api/Inventario/eliminarProductoInventariadoDrogueria`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(bodyData)
+    });
+    
+    const result = await response.json();
+    console.log('Respuesta eliminar:', result);
+    
+    return {
+      success: result.success === 1 || result.success === true,
+      message: result.message || 'Producto eliminado'
+    };
+  } catch (error) {
+    console.error('Error al eliminar:', error);
+    return { success: false, message: error.message };
+  }  
+};
+
+export const iniciarInventarioDrogueria = async (tipo, usuario, idsucursal) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/Inventario/iniciarInventarioDrogueria`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        tipo: tipo,
+        usuario: usuario,
+        idsucursal: String(idsucursal || '')
+      })
+    });
+    
+    const result = await response.json();
+    console.log('Iniciar inventario respuesta:', result);
+    return result;
+  } catch (error) {
+    console.error('Error al iniciar:', error);
+    return { success: false, message: error.message };
+  }
+};
+
+export const finalizarInventarioDrogueria = async (idEmpleado, idaperturainventario) => {
+  try {
+    console.log('📡 [DROGUERIA] Enviando finalizar:', { idEmpleado, idaperturainventario });
+    
+    const response = await fetch(`${API_BASE_URL}/api/Inventario/finalizarInventarioDrogueria`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        usuario: idEmpleado,
+        idaperturainventario: idaperturainventario
+      })
+    });
+    
+    const result = await response.json();
+    console.log('✅ Resultado finalizar:', result);
+    
+    return {
+      success: result.success === true || result.success === 1,
+      mensaje: result.message || 'Inventario finalizado'
+    };
+    
+  } catch (error) {
+    console.error('Error finalizando inventario:', error);
+    return { 
+      success: false, 
+      message: error.message || 'Error al conectar con el servidor' 
+    };
+  }
+};
+
+/**
+ * Envía los datos modificados al backend para generar el archivo Excel oficial con ClosedXML
+ * @param {Object} payload Datos con fechaInicioInventario, fechaFinInventario, tipoInventario, rows
+ * @returns {Promise<{success: boolean, fileUri?: string, message?: string}>}
+ */
+export const exportarReporteExcelDrogueria = async (payload) => {
+  try {
+    console.log('📤 [DROGUERIA] Enviando solicitud para generar reporte Excel al backend:', {
+      fechaInicio: payload.fechaInicioInventario,
+      fechaFin: payload.fechaFinInventario,
+      tipo: payload.tipoInventario,
+      totalFilas: payload.rows?.length || 0
+    });
+
+    const response = await fetch(`${API_BASE_URL}/api/Inventario/exportarReporteExcelDrogueria`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    // 1. Manejo de Errores (El servidor responde con HTTP 400/404/500 en formato JSON)
+    if (!response.ok) {
+      const errorJson = await response.json().catch(() => null);
+      const errorMsg = errorJson?.message || `Error del servidor (${response.status}: ${response.statusText})`;
+      return { success: false, message: errorMsg };
+    }
+
+    // 2. Manejo de Éxito (El servidor responde con HTTP 200 entregando el archivo binario .xlsx)
+    const blob = await response.blob();
+    const base64Data = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = reject;
+      reader.onload = () => {
+        const dataUrl = reader.result;
+        resolve(dataUrl.split(',')[1]);
+      };
+      reader.readAsDataURL(blob);
+    });
+
+    const fileName = `Control_Inventarios_Drogueria_${Date.now()}.xlsx`;
+    const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
+
+    await FileSystem.writeAsStringAsync(fileUri, base64Data, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
+    return { success: true, fileUri: fileUri, fileName: fileName };
+
+  } catch (error) {
+    console.error('❌ Error al exportar reporte Excel Droguería:', error);
+    return { success: false, message: error.message || 'Error al conectar con el servidor' };
+  }
+};
+
+/**
+ * Función auxiliar para consultar productos de una apertura, filtrar diferencias y generar el Excel
+ * @param {Object} inventario Objeto de inventario con idaperturainventario (o id), fecha_inicio, fecha_fin, tipo
+ * @param {Array} [rawItemsList] Lista opcional de items ya cargados en memoria. Si no se pasa, se consultan de la BD.
+ * @returns {Promise<{success: boolean, fileUri?: string, message?: string}>}
+ */
+export const exportarExcelDrogueriaPorApertura = async (inventario) => {
+  try {
+    const idApertura = inventario?.idaperturainventario || inventario?.id;
+    
+    if (!idApertura) {
+      return { success: false, message: 'No se encontró el ID de apertura de este inventario.' };
+    }
+    console.log(`📦 Consultando productos de apertura ${idApertura} para exportar Excel...`);
+    productos = await obtenerTodosProductoInventariadoDrogueria(null, idApertura);
+
+    if (!productos || productos.length === 0) {
+      return { success: false, message: 'No hay productos registrados en este inventario.' };
+    }
+
+    // Filtrar únicamente los registros con diferencias en cantidad (modificados)
+    const itemsModificados = productos.filter(item => {
+      const stockSistema = parseFloat(item.CantExistencial ?? item.cantExistencial ?? 0) || 0;
+      const stockFisico = parseFloat(item.Cant_nueva ?? item.cant_Nueva ?? item.cant_nueva ?? 0) || 0;
+      return Math.abs(stockFisico - stockSistema) > 0.0001;
+    });
+
+    if (itemsModificados.length === 0) {
+      return {
+        success: false,
+        message: 'No se encontraron lotes con diferencias de cantidad (Stock Físico ≠ Stock Sistema) para incluir en el reporte.'
+      };
+    }
+
+    const payload = {
+      fechaInicioInventario: inventario?.fecha_inicio || null,
+      fechaFinInventario: inventario?.fecha_fin || null,
+      tipoInventario: inventario?.tipo || 'PARCIAL',
+      rows: itemsModificados.map((item, index) => {
+        const stockSistema = parseFloat(item.CantExistencial ?? item.cantExistencial ?? 0) || 0;
+        const stockFisico = parseFloat(item.Cant_nueva ?? item.cant_Nueva ?? item.cant_nueva ?? 0) || 0;
+        const precioc = parseFloat(item.precioc) || 0;
+        const diferencia = stockFisico - stockSistema;
+
+        return {
+          n: index + 1,
+          codigoBarras: item.CodigoBarra || item.codigobarra || item.codigoBarra || '',
+          descripcion: item.Descripcion || item.descripcion || '',
+          laboratorio: item.laboratorio || '',
+          numLote: item.NumLote || item.numLote || 'S/L',
+          fechaVencimiento: item.fechavalidez ? String(item.fechavalidez).split('T')[0] : '',
+          stockSistema: stockSistema,
+          stockFisico: stockFisico,
+          diferencia: diferencia,
+          valorizado: diferencia * precioc,
+          observaciones: ''
+        };
+      })
+    };
+
+    return await exportarReporteExcelDrogueria(payload);
+  } catch (error) {
+    console.error('❌ Error en exportarExcelDrogueriaPorApertura:', error);
+    return { success: false, message: error.message || 'Error al procesar la exportación del reporte' };
+  }
+};
+

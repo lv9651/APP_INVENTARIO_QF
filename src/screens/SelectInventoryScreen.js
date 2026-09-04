@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, ScrollView } from 'react-native';
-import { getInventarioEstado } from '../services/api';
+import * as Sharing from 'expo-sharing';
+import { getInventarioEstado, exportarExcelDrogueriaPorApertura } from '../services/api';
 
 export default function SelectInventoryScreen({ navigation, route }) {
   const { user } = route.params;
   const [inventario, setInventario] = useState(null);
   const [inventariosActivos, setInventariosActivos] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [exportingId, setExportingId] = useState(null);
 
   const isAdmin = user?.role === 'ADMINISTRADOR';
 
@@ -53,6 +55,42 @@ export default function SelectInventoryScreen({ navigation, route }) {
     }
   };
 
+  const handleExportarExcel = async (inv) => {
+    const idApertura = inv?.idaperturainventario || inv?.id;
+    if (!idApertura) {
+      Alert.alert('Error', 'No se encontró el identificador de apertura de este inventario.');
+      return;
+    }
+
+    setExportingId(idApertura);
+    try {
+      console.log('📊 Exportando Excel de Droguería para inventario:', inv);
+      const result = await exportarExcelDrogueriaPorApertura(inv);
+
+      if (result.success && result.fileUri) {
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(result.fileUri, {
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            dialogTitle: `Control Inventarios - ${inv.nombre_sucursal_inventario || 'Droguería'}`
+          });
+        } else {
+          Alert.alert('✅ Éxito', 'Reporte generado correctamente en el dispositivo.');
+        }
+      } else {
+        Alert.alert('Aviso', result.message || 'No se pudo generar el reporte Excel');
+      }
+    } catch (error) {
+      console.error('Error al exportar reporte Excel:', error);
+      Alert.alert('Error', 'Ocurrió un error al procesar el reporte');
+    } finally {
+      setExportingId(null);
+    }
+  };
+
+  const esSucursalDrogueria = (sucursalId, sucursalNombre) => {
+    return Number(sucursalId) === 66 || (sucursalNombre || '').toUpperCase().includes('DROGUERIA');
+  };
+
   const conectarInventario = () => {
     if (!inventario || inventario.estado !== 'INICIADO') {
       Alert.alert('Inventario no disponible', 'No hay un inventario activo en tu sucursal.');
@@ -74,14 +112,21 @@ export default function SelectInventoryScreen({ navigation, route }) {
       }
     }
 
-    navigation.replace('Inventory', {
+    const esDrog = esSucursalDrogueria(user?.sucursalId, user?.sucursalNombre) ||
+                   esSucursalDrogueria(inventario?.idsucursal_inventario, inventario?.nombre_sucursal_inventario);
+    const targetScreen = esDrog ? 'InventoryDrogueria' : 'Inventory';
+
+    navigation.replace(targetScreen, {
       user: user,
       inventarioActivo: inventario
     });
   };
 
   const crearNuevoInventario = () => {
-    navigation.navigate('Inventory', { 
+    const esDrog = esSucursalDrogueria(user?.sucursalId, user?.sucursalNombre);
+    const targetScreen = esDrog ? 'InventoryDrogueria' : 'Inventory';
+
+    navigation.navigate(targetScreen, { 
       user: user,
       crearNuevo: true
     });
@@ -103,15 +148,18 @@ export default function SelectInventoryScreen({ navigation, route }) {
       <Text style={styles.subtitle}>🏢 Sucursal logueada: {user?.sucursalNombre || 'Sin sucursal'}</Text>
       
       {/* ==========================================
-          ⭐ SECCIÓN: TODOS LOS INVENTARIOS ACTIVOS
+          ⭐ SECCIÓN: TODOS LOS INVENTARIOS REGISTRADOS
           ========================================== */}
       {isAdmin && inventariosActivos.length > 0 && (
         <View style={styles.inventariosContainer}>
-          <Text style={styles.inventariosTitle}>📋 INVENTARIOS ACTIVOS</Text>
+          <Text style={styles.inventariosTitle}>📋 INVENTARIOS REGISTRADOS</Text>
           {inventariosActivos.map((inv, index) => {
             const nombreInv = (inv.nombre_sucursal_inventario || '').toLowerCase().trim();
             const nombreUser = (user?.sucursalNombre || '').toLowerCase().trim();
             const esSucursalActual = nombreInv === nombreUser || nombreInv.includes(nombreUser) || nombreUser.includes(nombreInv);
+            const esDrog = esSucursalDrogueria(inv?.idsucursal_inventario, inv?.nombre_sucursal_inventario);
+            const idApertura = inv.idaperturainventario || inv.id;
+            const isExportingThis = exportingId === idApertura;
             
             return (
               <TouchableOpacity 
@@ -122,8 +170,10 @@ export default function SelectInventoryScreen({ navigation, route }) {
                 ]}
                 onPress={() => {
                   if (inv.estado === 'INICIADO') {
-                    // Si el admin toca un inventario, ir a ese inventario
-                    navigation.replace('Inventory', {
+                    // Si el admin toca un inventario, ir a ese inventario (verificando si es Droguería)
+                    const targetScreen = esDrog ? 'InventoryDrogueria' : 'Inventory';
+
+                    navigation.replace(targetScreen, {
                       user: user,
                       inventarioActivo: inv
                     });
@@ -152,6 +202,11 @@ export default function SelectInventoryScreen({ navigation, route }) {
                       📅 Inicio: {new Date(inv.fecha_inicio).toLocaleString()}
                     </Text>
                   )}
+                  {inv.fecha_fin && (
+                    <Text style={styles.inventarioFecha}>
+                      🏁 Fin: {new Date(inv.fecha_fin).toLocaleString()}
+                    </Text>
+                  )}
                   {esSucursalActual && (
                     <Text style={styles.inventarioActualTag}>⭐ Sucursal actual</Text>
                   )}
@@ -159,6 +214,26 @@ export default function SelectInventoryScreen({ navigation, route }) {
                     <Text style={styles.inventarioClickTag}>👆 Toca para ingresar</Text>
                   )}
                 </View>
+
+                {/* Botón Exportar Excel en la esquina inferior de la tarjeta */}
+                {esDrog && (
+                  <View style={styles.cardActionsContainer}>
+                    <TouchableOpacity
+                      style={styles.exportCardBtn}
+                      onPress={() => handleExportarExcel(inv)}
+                      disabled={isExportingThis}
+                    >
+                      {isExportingThis ? (
+                        <View style={styles.btnRow}>
+                          <ActivityIndicator size="small" color="#fff" />
+                          <Text style={styles.exportCardBtnText}> Generando...</Text>
+                        </View>
+                      ) : (
+                        <Text style={styles.exportCardBtnText}>📊 Exportar Excel</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                )}
               </TouchableOpacity>
             );
           })}
@@ -182,6 +257,9 @@ export default function SelectInventoryScreen({ navigation, route }) {
           <Text style={styles.cardTitle}>📦 Inventario en tu sucursal</Text>
           <Text style={styles.cardInfo}>📋 Tipo: {inventario.tipo || 'PARCIAL'}</Text>
           <Text style={styles.cardInfo}>📅 Inicio: {new Date(inventario.fecha_inicio).toLocaleString()}</Text>
+          {inventario.fecha_fin && (
+            <Text style={styles.cardInfo}>🏁 Fin: {new Date(inventario.fecha_fin).toLocaleString()}</Text>
+          )}
           <Text style={styles.cardInfo}>🏢 Sucursal: {inventario.nombre_sucursal_inventario || 'N/A'}</Text>
           <Text style={styles.cardStatus}>🟢 Estado: {inventario.estado}</Text>
           
@@ -212,6 +290,24 @@ export default function SelectInventoryScreen({ navigation, route }) {
               {isAdmin ? '🔗 Conectarse (Admin)' : '🔗 Conectarse al Inventario'}
             </Text>
           </TouchableOpacity>
+
+          {/* Botón Exportar Excel para Droguería */}
+          {esSucursalDrogueria(inventario?.idsucursal_inventario, inventario?.nombre_sucursal_inventario) && (
+            <TouchableOpacity 
+              style={styles.exportCardBtnGrande} 
+              onPress={() => handleExportarExcel(inventario)}
+              disabled={exportingId === (inventario.idaperturainventario || inventario.id)}
+            >
+              {exportingId === (inventario.idaperturainventario || inventario.id) ? (
+                <View style={styles.btnRow}>
+                  <ActivityIndicator size="small" color="#fff" />
+                  <Text style={styles.exportCardBtnText}> Generando Excel...</Text>
+                </View>
+              ) : (
+                <Text style={styles.exportCardBtnText}>📊 Exportar Reporte Excel</Text>
+              )}
+            </TouchableOpacity>
+          )}
         </TouchableOpacity>
       ) : (
         <View style={styles.emptyContainer}>
@@ -369,5 +465,45 @@ const styles = StyleSheet.create({
   estadoBadgeAmarillo: {
     backgroundColor: '#f39c12',
     color: '#fff',
+  },
+  
+  cardActionsContainer: {
+    marginTop: 8,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+  exportCardBtn: {
+    backgroundColor: '#27ae60',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    alignSelf: 'flex-end',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.5,
+    elevation: 2,
+  },
+  exportCardBtnGrande: {
+    backgroundColor: '#27ae60',
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  exportCardBtnText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 12,
+  },
+  btnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

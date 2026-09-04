@@ -3,7 +3,8 @@ import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { 
   getProductByBarcode, 
-  validarPuedeEscanear 
+  validarPuedeEscanear,
+  obtenerProductoInventariadoDrogueria
 } from '../services/api';
 
 // IDs de sucursales según tu negocio
@@ -11,7 +12,7 @@ const SUCURSAL_QF_ALMACEN = 22;
 const SUCURSAL_ALMACEN_ORVIT = 67;
 const SUCURSAL_QF_CENTRAL = 18;
 
-export default function ScannerScreen({ onScan, onClose, navigation, user,idaperturainventario}) {
+export default function ScannerScreen({ onScan, onClose, navigation, user, idaperturainventario, existingProducts = [] }) {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -115,6 +116,56 @@ export default function ScannerScreen({ onScan, onClose, navigation, user,idaper
     
     const barcode = result.data;
     console.log('📷 Código escaneado:', barcode);
+    
+    // ===== FLUJO DROGUERÍA =====
+    const esDrogueria = Number(user?.sucursalId) === 66 || 
+                        (user?.sucursalNombre || '').toUpperCase().includes('DROGUERIA');
+
+    if (esDrogueria) {
+      // 1. Verificar si el producto ya existe en los registros locales en memoria
+      let yaExiste = Array.isArray(existingProducts) && existingProducts.some(p => 
+        (p.CodigoBarra || p.codigobarra || p.codigoBarra) === barcode
+      );
+
+      // 2. Si no se encuentra en memoria, verificar directamente en BD
+      if (!yaExiste) {
+        try {
+          const checkDb = await obtenerProductoInventariadoDrogueria(barcode, idaperturainventario);
+          const rawDbList = Array.isArray(checkDb) ? checkDb : (checkDb ? [checkDb] : []);
+          if (rawDbList && rawDbList.length > 0) {
+            yaExiste = true;
+          }
+        } catch (e) {
+          console.log('Error verificando existencia de producto en BD:', e);
+        }
+      }
+
+      console.log(`📤 Scanner Droguería - Barcode: ${barcode} - Modo: ${yaExiste ? 'EDICIÓN' : 'NUEVO'}`);
+      onClose();
+
+      if (yaExiste) {
+        // Redirigir en modo EDICIÓN para evitar duplicados
+        navigation.navigate('EditProductDrogueria', {
+          barcode: barcode,
+          isNew: false,
+          user: user,
+          fromScanner: false,
+          idaperturainventario: idaperturainventario,
+          inventarioActivo: { idaperturainventario: idaperturainventario }
+        });
+      } else {
+        // Redirigir en modo NUEVO ESCANEO (INSERT)
+        navigation.navigate('EditProductDrogueria', {
+          barcode: barcode,
+          isNew: true,
+          user: user,
+          fromScanner: true,
+          idaperturainventario: idaperturainventario,
+          inventarioActivo: { idaperturainventario: idaperturainventario }
+        });
+      }
+      return;
+    }
     
     try {
       // ❌ ELIMINADO: Ya no verificamos existencia aquí
