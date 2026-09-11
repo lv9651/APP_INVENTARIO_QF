@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, ScrollView } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Sharing from 'expo-sharing';
 import { getInventarioEstado, exportarExcelDrogueriaPorApertura } from '../services/api';
 
@@ -122,7 +123,43 @@ export default function SelectInventoryScreen({ navigation, route }) {
     });
   };
 
-  const crearNuevoInventario = () => {
+  const esMismaSucursal = (inv, user) => {
+    const esDrogUser = esSucursalDrogueria(user?.sucursalId, user?.sucursalNombre);
+    const esDrogInv = esSucursalDrogueria(inv?.idsucursal_inventario, inv?.nombre_sucursal_inventario);
+    if (esDrogUser && esDrogInv) return true;
+
+    if (inv?.idsucursal_inventario && user?.sucursalId) {
+      if (String(inv.idsucursal_inventario) === String(user.sucursalId)) return true;
+    }
+
+    const nombreInv = (inv?.nombre_sucursal_inventario || '').toLowerCase().trim();
+    const nombreUser = (user?.sucursalNombre || '').toLowerCase().trim();
+    return nombreInv === nombreUser || nombreInv.includes(nombreUser) || nombreUser.includes(nombreInv);
+  };
+
+  const crearNuevoInventario = async () => {
+    try {
+      setLoading(true);
+      const data = await getInventarioEstado();
+      const lista = data && data.success && Array.isArray(data.data) ? data.data : inventariosActivos;
+      
+      const invEnProgreso = lista.find(item => item.estado === 'INICIADO' && esMismaSucursal(item, user));
+      if (invEnProgreso) {
+        setLoading(false);
+        const tipoDesc = invEnProgreso.tipo === 'TOTAL' ? 'GENERAL' : (invEnProgreso.tipo || 'CICLICO');
+        const sucNombre = invEnProgreso.nombre_sucursal_inventario || user?.sucursalNombre || 'la sucursal';
+        Alert.alert(
+          '⚠️ Inventario en progreso',
+          `Ya existe un inventario en curso (${tipoDesc}) para ${sucNombre}.\n\nDebe finalizarse ese inventario antes de iniciar uno nuevo.`
+        );
+        return;
+      }
+    } catch (err) {
+      console.log('Error verificando inventario en curso:', err);
+    } finally {
+      setLoading(false);
+    }
+
     const esDrog = esSucursalDrogueria(user?.sucursalId, user?.sucursalNombre);
     const targetScreen = esDrog ? 'InventoryDrogueria' : 'Inventory';
 
@@ -321,7 +358,30 @@ export default function SelectInventoryScreen({ navigation, route }) {
         </View>
       )}
 
-      <TouchableOpacity style={styles.logoutButton} onPress={() => navigation.replace('Login')}>
+      <TouchableOpacity 
+        style={styles.logoutButton} 
+        onPress={() => {
+          Alert.alert(
+            'Cerrar Sesión',
+            '¿Está seguro de que desea cerrar sesión?',
+            [
+              { text: 'Cancelar', style: 'cancel' },
+              {
+                text: 'Sí, salir',
+                style: 'destructive',
+                onPress: async () => {
+                  try {
+                    await AsyncStorage.removeItem('@auth_credentials');
+                  } catch (e) {
+                    console.error('Error limpiando sesión:', e);
+                  }
+                  navigation.replace('Login');
+                }
+              }
+            ]
+          );
+        }}
+      >
         <Text style={styles.logoutText}>🚪 Cerrar Sesión</Text>
       </TouchableOpacity>
     </ScrollView>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as XLSX from 'xlsx';
@@ -8,7 +9,8 @@ import {
   getTomaInventario, 
   iniciarInventario,
   finalizarInventario,
-  eliminarTomaInventario  
+  eliminarTomaInventario,
+  getInventarioEstado
 } from '../services/api';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -156,10 +158,40 @@ const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
     setTipoInventario(tipo);
   };
 
-  const handleIniciarInventario = () => {
+  const handleIniciarInventario = async () => {
     if (!tipoInventario) {
       Alert.alert('Error', 'Seleccione un tipo de inventario');
       return;
+    }
+
+    setLoadingAccion(true);
+    try {
+      const estadoRes = await getInventarioEstado();
+      if (estadoRes && estadoRes.success && Array.isArray(estadoRes.data)) {
+        const invEnCurso = estadoRes.data.find(inv => {
+          if (inv.estado !== 'INICIADO') return false;
+          const nomInv = (inv.nombre_sucursal_inventario || '').toLowerCase().trim();
+          const nomUser = (user?.sucursalNombre || '').toLowerCase().trim();
+          const coincideNom = nomInv === nomUser || nomInv.includes(nomUser) || nomUser.includes(nomInv);
+          const coincideId = inv.idsucursal_inventario && user?.sucursalId && String(inv.idsucursal_inventario) === String(user.sucursalId);
+          return coincideNom || coincideId;
+        });
+
+        if (invEnCurso) {
+          setLoadingAccion(false);
+          const tipoDesc = invEnCurso.tipo === 'TOTAL' ? 'TOTAL' : (invEnCurso.tipo || 'PARCIAL');
+          const sucNombre = invEnCurso.nombre_sucursal_inventario || user?.sucursalNombre || 'la sucursal';
+          Alert.alert(
+            '⚠️ Inventario en progreso',
+            `Ya existe un inventario en curso (${tipoDesc}) para ${sucNombre}.\n\nDebe finalizarse ese inventario antes de iniciar uno nuevo.`
+          );
+          return;
+        }
+      }
+    } catch (e) {
+      console.log('Error verificando inventario en curso en BD:', e);
+    } finally {
+      setLoadingAccion(false);
     }
     
     Alert.alert(
@@ -391,6 +423,32 @@ const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
     return <ScannerScreen onScan={addItem} onClose={() => setShowScanner(false)} navigation={navigation} user={user}     idaperturainventario={inventarioActivo?.idaperturainventario  || null} />;
   }
 
+  const handleSalir = () => {
+    Alert.alert(
+      'Salir',
+      '¿Qué acción desea realizar?',
+      [
+        {
+          text: '📋 Menú Inventarios',
+          onPress: () => navigation.replace('SelectInventory', { user })
+        },
+        {
+          text: '🚪 Cerrar Sesión',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await AsyncStorage.removeItem('@auth_credentials');
+            } catch (e) {
+              console.error('Error cerrando sesión:', e);
+            }
+            navigation.replace('Login');
+          }
+        },
+        { text: 'Cancelar', style: 'cancel' }
+      ]
+    );
+  };
+
   return (
     <View style={styles.container}>
       {/* HEADER */}
@@ -402,7 +460,7 @@ const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
             <Text style={styles.sucursalLogueado}>🏢 Sucursal: {user.sucursalNombre}</Text>
           )}
         </View>
-        <TouchableOpacity onPress={() => navigation.replace('Login')}>
+        <TouchableOpacity onPress={handleSalir}>
           <Text style={styles.logoutText}>🚪 Salir</Text>
         </TouchableOpacity>
       </View>

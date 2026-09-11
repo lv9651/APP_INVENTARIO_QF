@@ -12,7 +12,16 @@ const SUCURSAL_QF_ALMACEN = 22;
 const SUCURSAL_ALMACEN_ORVIT = 67;
 const SUCURSAL_QF_CENTRAL = 18;
 
-export default function ScannerScreen({ onScan, onClose, navigation, user, idaperturainventario, existingProducts = [] }) {
+export default function ScannerScreen({ 
+  onScan, 
+  onClose, 
+  navigation, 
+  user, 
+  idaperturainventario, 
+  existingProducts = [],
+  inventarioActivo: inventarioActivoParam,
+  tipoInventario 
+}) {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -143,6 +152,14 @@ export default function ScannerScreen({ onScan, onClose, navigation, user, idape
       console.log(`📤 Scanner Droguería - Barcode: ${barcode} - Modo: ${yaExiste ? 'EDICIÓN' : 'NUEVO'}`);
       onClose();
 
+      const invActivoCompleto = (inventarioActivoParam && typeof inventarioActivoParam === 'object') 
+        ? { ...inventarioActivoParam, tipo: inventarioActivoParam.tipo || tipoInventario || 'TOTAL' }
+        : {
+            idaperturainventario: idaperturainventario,
+            tipo: tipoInventario || 'TOTAL',
+            estado: 'INICIADO'
+          };
+
       if (yaExiste) {
         // Redirigir en modo EDICIÓN para evitar duplicados
         navigation.navigate('EditProductDrogueria', {
@@ -151,7 +168,7 @@ export default function ScannerScreen({ onScan, onClose, navigation, user, idape
           user: user,
           fromScanner: false,
           idaperturainventario: idaperturainventario,
-          inventarioActivo: { idaperturainventario: idaperturainventario }
+          inventarioActivo: invActivoCompleto
         });
       } else {
         // Redirigir en modo NUEVO ESCANEO (INSERT)
@@ -161,7 +178,7 @@ export default function ScannerScreen({ onScan, onClose, navigation, user, idape
           user: user,
           fromScanner: true,
           idaperturainventario: idaperturainventario,
-          inventarioActivo: { idaperturainventario: idaperturainventario }
+          inventarioActivo: invActivoCompleto
         });
       }
       return;

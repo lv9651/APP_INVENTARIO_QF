@@ -1,8 +1,8 @@
 import { createWebModule } from "expo-modules-core";
 import * as FileSystem from 'expo-file-system';
 
-//const API_BASE_URL = 'http://apiqfventas.qf.com.pe';
-const API_BASE_URL = 'http://apiws.qf.com.pe';
+const API_BASE_URL = 'http://apiqfventas.qf.com.pe';
+//const API_BASE_URL = 'http://apiws.qf.com.pe';
 
 export const login = async (username, password) => {
   try {
@@ -784,17 +784,18 @@ export const exportarExcelDrogueriaPorApertura = async (inventario) => {
       return { success: false, message: 'No hay productos registrados en este inventario.' };
     }
 
-    // Filtrar únicamente los registros con diferencias en cantidad (modificados)
-    const itemsModificados = productos.filter(item => {
+    // Filtrar: si cantidad existencial es 0 y cantidad nueva también es 0, NO se incluye; caso contrario SÍ se incluye
+    const itemsParaReporte = productos.filter(item => {
       const stockSistema = parseFloat(item.CantExistencial ?? item.cantExistencial ?? 0) || 0;
       const stockFisico = parseFloat(item.Cant_nueva ?? item.cant_Nueva ?? item.cant_nueva ?? 0) || 0;
-      return Math.abs(stockFisico - stockSistema) > 0.0001;
+      const ambosCero = Math.abs(stockSistema) < 0.0001 && Math.abs(stockFisico) < 0.0001;
+      return !ambosCero;
     });
 
-    if (itemsModificados.length === 0) {
+    if (itemsParaReporte.length === 0) {
       return {
         success: false,
-        message: 'No se encontraron lotes con diferencias de cantidad (Stock Físico ≠ Stock Sistema) para incluir en el reporte.'
+        message: 'No se encontraron lotes para incluir en el reporte (ambas cantidades son 0).'
       };
     }
 
@@ -802,7 +803,7 @@ export const exportarExcelDrogueriaPorApertura = async (inventario) => {
       fechaInicioInventario: inventario?.fecha_inicio || null,
       fechaFinInventario: inventario?.fecha_fin || null,
       tipoInventario: inventario?.tipo || 'PARCIAL',
-      rows: itemsModificados.map((item, index) => {
+      rows: itemsParaReporte.map((item, index) => {
         const stockSistema = parseFloat(item.CantExistencial ?? item.cantExistencial ?? 0) || 0;
         const stockFisico = parseFloat(item.Cant_nueva ?? item.cant_Nueva ?? item.cant_nueva ?? 0) || 0;
         const precioc = parseFloat(item.precioc) || 0;
@@ -831,3 +832,71 @@ export const exportarExcelDrogueriaPorApertura = async (inventario) => {
   }
 };
 
+export const GuardarEditarSububicacion = async (idproducto, sububicaciones) => {
+  try{
+    const response = await fetch(`${API_BASE_URL}/api/Inventario/GuardarEditarSububicacion`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          idproducto: idproducto,
+          sububicaciones: sububicaciones
+        })
+      }
+    );
+
+    if (!response.ok){
+      return {
+        success: false,
+        message: 'Ocurrio un error al guardar la sububicacion.'
+      }
+    }
+
+    const result = await response.json();
+    console.log('✅ Resultado GuardarSububicacion:', result);
+    return {
+      success: result.success !== undefined ? (result.success === true) : response.ok,
+      message: result.message || (response.ok ? 'Sububicación procesada correctamente' : 'Error al guardar')
+    };
+  }
+  catch (error){
+    return {success: false, message: error.message}
+  }
+}
+
+export const ObtenerSububicacion = async (idproducto) => {
+  try{
+    const response = await fetch(`${API_BASE_URL}/api/Inventario/ObtenerSububicacion/${idproducto}`);
+
+    if (!response.ok){
+      return null
+    }
+
+    const result = await response.json();
+    return result;
+  }
+  catch (error){
+    console.error("Ocurrio un error al obtener la sububicacion del producto: ", idproducto);
+    return null
+  }
+}
+
+export const ObtenerTodosProductosSucursalDrogueria = async () =>{
+  try{
+    const response = await fetch(`${API_BASE_URL}/api/Inventario/ObtenerTodosProductosSucursalDrogueria`);
+    
+    if (!response.ok){
+      console.error("[DROGUERIA] Ocurrio un error en la consulta.");
+      return null
+    }
+
+    const result = await response.json();
+    return result;
+  }
+  catch (error){
+    console.error("[DROGUERIA] Ocurrio un error al obtener los producto de la sucursal DROGUERIA.");
+    return null;
+  }
+}

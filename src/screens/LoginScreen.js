@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, Modal, FlatList } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { login, listarSucursales } from '../services/api';
 
-export default function LoginScreen({ navigation }) {
+export default function LoginScreen({ navigation, route }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -13,28 +14,96 @@ export default function LoginScreen({ navigation }) {
   const [sucursalSeleccionada, setSucursalSeleccionada] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [cargandoSucursales, setCargandoSucursales] = useState(true);
+  const [autoLoginLoading, setAutoLoginLoading] = useState(true);
 
-  // Cargar sucursales al iniciar
+  // Inicializar sucursales y verificar si hay credenciales guardadas para auto-login
   useEffect(() => {
-    cargarSucursales();
+    inicializar();
   }, []);
 
-  const cargarSucursales = async () => {
+  const inicializar = async () => {
     try {
+      setAutoLoginLoading(true);
       setCargandoSucursales(true);
-      const data = await listarSucursales();
-      console.log('Sucursales:', data);
-      
-      if (data && data.length > 0) {
-        setSucursales(data);
-        setSucursalSeleccionada(data[0]);
+
+      // Cargar lista de sucursales y credenciales guardadas en paralelo
+      const [dataSucursales, storedCredsRaw] = await Promise.all([
+        listarSucursales().catch(err => {
+          console.error('Error cargando sucursales:', err);
+          return [];
+        }),
+        AsyncStorage.getItem('@auth_credentials').catch(err => {
+          console.error('Error leyendo credenciales de AsyncStorage:', err);
+          return null;
+        })
+      ]);
+
+      if (dataSucursales && dataSucursales.length > 0) {
+        setSucursales(dataSucursales);
+      }
+
+      // Si hay credenciales guardadas, intentar auto-login
+      if (storedCredsRaw) {
+        try {
+          const creds = JSON.parse(storedCredsRaw);
+          if (creds?.username && creds?.password) {
+            setUsername(creds.username);
+            setPassword(creds.password);
+
+            // Determinar la sucursal adecuada
+            let sucursalToUse = creds.sucursal;
+            if (dataSucursales && dataSucursales.length > 0 && creds.sucursal?.idsucursal) {
+              const found = dataSucursales.find(s => s.idsucursal === creds.sucursal.idsucursal);
+              if (found) sucursalToUse = found;
+            } else if (!sucursalToUse && dataSucursales && dataSucursales.length > 0) {
+              sucursalToUse = dataSucursales[0];
+            }
+
+            if (sucursalToUse) {
+              setSucursalSeleccionada(sucursalToUse);
+            }
+
+            console.log('🔄 Ejecutando auto-login para usuario:', creds.username);
+            const result = await login(creds.username, creds.password);
+
+            if (result.success) {
+              const userWithBranch = {
+                ...result.user,
+                sucursalId: sucursalToUse?.idsucursal || result.user?.sucursal,
+                sucursalNombre: sucursalToUse?.nombreSucursal || 'Sucursal'
+              };
+              setAutoLoginLoading(false);
+              setCargandoSucursales(false);
+              navigation.replace('SelectInventory', { user: userWithBranch });
+              return;
+            } else {
+              console.log('⚠️ Auto-login falló:', result.message);
+              Alert.alert('Aviso de Sesión', result.message || 'No se pudo iniciar sesión automáticamente. Verifique sus credenciales.');
+            }
+          }
+        } catch (parseError) {
+          console.error('Error parseando credenciales:', parseError);
+        }
+      } else {
+        if (dataSucursales && dataSucursales.length > 0) {
+          setSucursalSeleccionada(dataSucursales[0]);
+        }
       }
     } catch (error) {
-      console.error('Error:', error);
-      Alert.alert('Error', 'No se pudieron cargar las sucursales');
+      console.error('Error durante inicialización en LoginScreen:', error);
     } finally {
+      setAutoLoginLoading(false);
       setCargandoSucursales(false);
     }
+  };
+
+  const cancelarAutoLogin = async () => {
+    try {
+      await AsyncStorage.removeItem('@auth_credentials');
+    } catch (e) {
+      console.error('Error al cancelar auto-login:', e);
+    }
+    setAutoLoginLoading(false);
   };
 
   const handleLogin = async () => {
@@ -53,6 +122,17 @@ export default function LoginScreen({ navigation }) {
     const result = await login(username, password);
     
     if (result.success) {
+      // Guardar credenciales para futuros inicios de sesión automáticos
+      try {
+        await AsyncStorage.setItem('@auth_credentials', JSON.stringify({
+          username: username.trim(),
+          password: password,
+          sucursal: sucursalSeleccionada
+        }));
+      } catch (saveError) {
+        console.error('Error guardando credenciales en AsyncStorage:', saveError);
+      }
+
       // Agregar la sucursal seleccionada al objeto user
       const userWithBranch = {
         ...result.user,
@@ -66,6 +146,20 @@ export default function LoginScreen({ navigation }) {
     
     setLoading(false);
   };
+
+  if (autoLoginLoading) {
+    return (
+      <View style={styles.loadingScreenContainer}>
+        <Text style={styles.title}>📦 INVENTARIO ORVIT</Text>
+        <Text style={styles.subtitle}>Módulo de Toma de Inventarios</Text>
+        <ActivityIndicator size="large" color="#3498db" style={{ marginVertical: 20 }} />
+        <Text style={styles.autoLoginText}>Iniciando sesión automáticamente...</Text>
+        <TouchableOpacity style={styles.cancelAutoLoginButton} onPress={cancelarAutoLogin}>
+          <Text style={styles.cancelAutoLoginText}>Cancelar e ingresar manualmente</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -252,6 +346,33 @@ const styles = StyleSheet.create({
   },
   closeButtonText: {
     color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  loadingScreenContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 30,
+    backgroundColor: '#f5f5f5',
+  },
+  autoLoginText: {
+    fontSize: 16,
+    color: '#2c3e50',
+    fontWeight: '600',
+    marginTop: 10,
+    textAlign: 'center',
+  },
+  cancelAutoLoginButton: {
+    marginTop: 25,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e74c3c',
+  },
+  cancelAutoLoginText: {
+    color: '#e74c3c',
     fontSize: 14,
     fontWeight: 'bold',
   },

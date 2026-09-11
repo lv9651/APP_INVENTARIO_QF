@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert, Modal } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as XLSX from 'xlsx';
@@ -9,7 +10,9 @@ import {
   iniciarInventarioDrogueria,
   finalizarInventarioDrogueria,
   eliminarProductoInventariadoDrogueria,
-  exportarReporteExcelDrogueria
+  exportarReporteExcelDrogueria,
+  ObtenerTodosProductosSucursalDrogueria,
+  getInventarioEstado
 } from '../services/api';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -28,6 +31,8 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
   const [fechaInicioInventario, setFechaInicioInventario] = useState(null);
   const [fechaFinInventario, setFechaFinInventario] = useState(null);
   const [loadingAccion, setLoadingAccion] = useState(false);
+  const [productosFaltantes, setProductosFaltantes] = useState([]);
+  const [modalFaltantesVisible, setModalFaltantesVisible] = useState(false);
   
   const user = route.params?.user;
   const inventarioActivo = route.params?.inventarioActivo;
@@ -67,14 +72,26 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
 
     const inv = route.params?.inventarioActivo || inventarioActivoState;
     if (inv) {
-      setInventarioActivoState(inv);
-      const idAp = inv.idaperturainventario || inv.id || route.params?.idaperturainventario || null;
-      console.log("[InventoryDrogueriaScreen] IDAPERTURAINVENTARIO: ", idAp, "ESTADO:", inventarioEstado);
+      setInventarioActivoState(prev => ({
+        ...(prev || {}),
+        ...inv
+      }));
+      const idAp = inv.idaperturainventario || inv.id || route.params?.idaperturainventario || idAperturaState || null;
+      console.log("[InventoryDrogueriaScreen] IDAPERTURAINVENTARIO: ", idAp, "ESTADO:", inv.estado || inventarioEstado, "TIPO:", inv.tipo || tipoInventario);
       if (idAp) {
         setIdAperturaState(idAp);
       }
-      setInventarioEstado(inv.estado || 'INICIADO');
-      setTipoInventario(inv.tipo || 'PARCIAL');
+      if (inv.estado) {
+        setInventarioEstado(inv.estado);
+      } else if (!inventarioEstado || inventarioEstado === 'PENDIENTE') {
+        setInventarioEstado('INICIADO');
+      }
+
+      // CRÍTICO: Solo cambiar tipo si inv.tipo viene explícitamente definido.
+      // Si no viene, conservar el tipoInventario que ya estaba seteado.
+      if (inv.tipo) {
+        setTipoInventario(inv.tipo);
+      }
       if (inv.fecha_inicio) {
         setFechaInicioInventario(inv.fecha_inicio);
       }
@@ -83,7 +100,7 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
       }
     } else if (route.params?.idaperturainventario) {
       setIdAperturaState(route.params.idaperturainventario);
-    } else {
+    } else if (!idAperturaState) {
       setInventarioEstado('PENDIENTE');
       setTipoInventario('PARCIAL');
     }
@@ -109,6 +126,27 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
         setGroupedItems([]);
         setIsLoading(false);
         return;
+      }
+
+      // Sincronizar estado y tipo real desde la BD
+      try {
+        const estadoRes = await getInventarioEstado();
+        if (estadoRes && estadoRes.success && Array.isArray(estadoRes.data)) {
+          const invActual = estadoRes.data.find(
+            item => String(item.idaperturainventario || item.id) === String(idaperturainventario)
+          );
+          if (invActual) {
+            console.log('🔄 [DROGUERIA] Sincronizado con BD - Tipo:', invActual.tipo, 'Estado:', invActual.estado);
+            if (invActual.tipo) setTipoInventario(invActual.tipo);
+            if (invActual.estado) setInventarioEstado(invActual.estado);
+            setInventarioActivoState(prev => ({
+              ...(prev || {}),
+              ...invActual
+            }));
+          }
+        }
+      } catch (eSync) {
+        console.log('Error sincronizando estado de inventario en loadProducts:', eSync);
       }
 
       let productos = [];
@@ -172,10 +210,36 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
     setTipoInventario(tipo);
   };
 
-  const handleIniciarInventario = () => {
+  const handleIniciarInventario = async () => {
     if (!tipoInventario) {
       Alert.alert('Error', 'Seleccione un tipo de inventario');
       return;
+    }
+
+    setLoadingAccion(true);
+    try {
+      const estadoRes = await getInventarioEstado();
+      if (estadoRes && estadoRes.success && Array.isArray(estadoRes.data)) {
+        const invEnCurso = estadoRes.data.find(inv => {
+          if (inv.estado !== 'INICIADO') return false;
+          const nom = (inv.nombre_sucursal_inventario || '').toUpperCase();
+          return nom.includes('DROGUERIA') || Number(inv.idsucursal_inventario) === 66;
+        });
+
+        if (invEnCurso) {
+          setLoadingAccion(false);
+          const tipoDesc = invEnCurso.tipo === 'TOTAL' ? 'GENERAL' : (invEnCurso.tipo || 'CICLICO');
+          Alert.alert(
+            '⚠️ Inventario en progreso',
+            `Ya existe un inventario en curso (${tipoDesc}) para Q. F. DROGUERIA.\n\nDebe finalizarse ese inventario antes de iniciar uno nuevo.`
+          );
+          return;
+        }
+      }
+    } catch (e) {
+      console.log('Error verificando inventario en curso:', e);
+    } finally {
+      setLoadingAccion(false);
     }
     
     Alert.alert(
@@ -224,12 +288,117 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
     );
   };
 
-  const handleFinalizarInventario = () => {
+  const mostrarAvisoProductosFaltantes = (faltantes) => {
+    const total = faltantes.length;
+    const maxItemsEnAlerta = 8;
+    const itemsPreview = faltantes.slice(0, maxItemsEnAlerta);
+
+    let mensaje = itemsPreview.map((item) => {
+      const codigo = item.codigoBarras || item.codigobarra || item.CodigoBarra || 'S/C';
+      const desc = item.descripcion || item.Descripcion || 'Sin descripción';
+      return `• [${codigo}] ${desc}`;
+    }).join('\n');
+
+    if (total > maxItemsEnAlerta) {
+      mensaje += `\n\n... y ${total - maxItemsEnAlerta} producto(s) más pendientes.`;
+    }
+
+    Alert.alert(
+      '⚠️ Productos Faltantes por Escanear',
+      `Faltan escanear ${total} producto(s) con lotes en Droguería.\n\n` +
+      `En el inventario GENERAL deben escanearse todos los productos antes de cerrar:\n\n` +
+      mensaje,
+      total > maxItemsEnAlerta 
+        ? [
+            { text: 'Entendido', style: 'cancel' },
+            { text: '📋 Ver Lista Completa', onPress: () => setModalFaltantesVisible(true) }
+          ]
+        : [{ text: 'Entendido', style: 'default' }]
+    );
+  };
+
+  const handleFinalizarInventario = async () => {
     const idaperturainventario = idAperturaState || inventarioActivoState?.idaperturainventario || inventarioActivoState?.id || route.params?.inventarioActivo?.idaperturainventario || route.params?.idaperturainventario || null;
     
     if (!idaperturainventario) {
       Alert.alert('Error', 'No se pudo identificar el inventario activo');
       return;
+    }
+
+    // Sincronizar el tipo real del inventario desde la BD antes de validar o finalizar
+    let tipoActual = tipoInventario;
+    try {
+      const estadoRes = await getInventarioEstado();
+      if (estadoRes && estadoRes.success && Array.isArray(estadoRes.data)) {
+        const invActual = estadoRes.data.find(
+          item => String(item.idaperturainventario || item.id) === String(idaperturainventario)
+        );
+        if (invActual && invActual.tipo) {
+          tipoActual = invActual.tipo;
+          setTipoInventario(tipoActual);
+          if (invActual.estado) setInventarioEstado(invActual.estado);
+        }
+      }
+    } catch (eTipo) {
+      console.log('Error verificando tipo de inventario en BD antes de finalizar:', eTipo);
+    }
+
+    // =========================================================================
+    // VALIDACIÓN PARA INVENTARIO GENERAL (TOTAL): VERIFICAR PRODUCTOS FALTANTES
+    // =========================================================================
+    if (tipoActual === 'TOTAL') {
+      setLoadingAccion(true);
+      try {
+        console.log('🔍 [DROGUERIA] Validando productos para inventario TOTAL...');
+
+        // 1. Obtener todos los productos con lotes en Droguería
+        const resSucursal = await ObtenerTodosProductosSucursalDrogueria();
+        const productosSucursal = Array.isArray(resSucursal) 
+          ? resSucursal 
+          : (resSucursal?.data && Array.isArray(resSucursal.data) ? resSucursal.data : []);
+
+        if (productosSucursal && productosSucursal.length > 0) {
+          // 2. Obtener todos los productos inventariados en esta apertura
+          let productosInventariados = rawItems;
+          if (viewMode === 'mis' || !productosInventariados || productosInventariados.length === 0) {
+            const todosInv = await obtenerTodosProductoInventariadoDrogueria(null, idaperturainventario);
+            if (Array.isArray(todosInv) && todosInv.length > 0) {
+              productosInventariados = todosInv.filter(prod => String(prod.idaperturainventario) === String(idaperturainventario));
+            }
+          }
+
+          // Crear conjunto de idproducto escaneados
+          const idProductosEscaneados = new Set();
+          (productosInventariados || []).forEach(p => {
+            const id = Number(p.idproducto || p.idProducto);
+            if (id) idProductosEscaneados.add(id);
+          });
+          (groupedItems || []).forEach(p => {
+            const id = Number(p.idproducto || p.idProducto);
+            if (id) idProductosEscaneados.add(id);
+          });
+
+          // 3. Filtrar los que faltan escanear
+          const faltantes = productosSucursal.filter(prod => {
+            const id = Number(prod.idproducto || prod.idProducto);
+            return id && !idProductosEscaneados.has(id);
+          });
+
+          console.log(`📊 [DROGUERIA] Total sucursal: ${productosSucursal.length} | Escaneados: ${idProductosEscaneados.size} | Faltantes: ${faltantes.length}`);
+
+          if (faltantes.length > 0) {
+            setLoadingAccion(false);
+            setProductosFaltantes(faltantes);
+            mostrarAvisoProductosFaltantes(faltantes);
+            return;
+          }
+        }
+      } catch (errVal) {
+        console.error('❌ Error en validación de inventario TOTAL:', errVal);
+        Alert.alert('Advertencia', 'Ocurrió un error al validar los productos de la sucursal: ' + errVal.message);
+      } finally {
+        setLoadingAccion(false);
+      }
     }
 
     const totalUnits = groupedItems.reduce((sum, i) => sum + (i.totalUnidades || 0), 0);
@@ -309,17 +478,18 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
       return;
     }
 
-    // Filtrar únicamente los registros con diferencias en cantidad (modificados)
-    const itemsModificados = rawItems.filter(item => {
+    // Filtrar: si cantidad existencial es 0 y cantidad nueva también es 0, NO se incluye; caso contrario SÍ se incluye
+    const itemsParaReporte = rawItems.filter(item => {
       const stockSistema = parseFloat(item.CantExistencial ?? item.cantExistencial ?? 0) || 0;
       const stockFisico = parseFloat(item.Cant_nueva ?? item.cant_Nueva ?? item.cant_nueva ?? 0) || 0;
-      return Math.abs(stockFisico - stockSistema) > 0.0001;
+      const ambosCero = Math.abs(stockSistema) < 0.0001 && Math.abs(stockFisico) < 0.0001;
+      return !ambosCero;
     });
 
-    if (itemsModificados.length === 0) {
+    if (itemsParaReporte.length === 0) {
       Alert.alert(
         'Aviso',
-        'No se encontraron lotes con diferencias de cantidad (Stock Físico ≠ Stock Sistema) para incluir en el reporte.'
+        'No se encontraron lotes para incluir en el reporte (ambas cantidades son 0).'
       );
       return;
     }
@@ -330,7 +500,7 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
         fechaInicioInventario: fechaInicioInventario,
         fechaFinInventario: fechaFinInventario,
         tipoInventario: tipoInventario || 'PARCIAL',
-        rows: itemsModificados.map((item, index) => {
+        rows: itemsParaReporte.map((item, index) => {
           const stockSistema = parseFloat(item.CantExistencial ?? item.cantExistencial ?? 0) || 0;
           const stockFisico = parseFloat(item.Cant_nueva ?? item.cant_Nueva ?? item.cant_nueva ?? 0) || 0;
           const precioc = parseFloat(item.precioc) || 0;
@@ -386,6 +556,11 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
 
   if (showScanner) {
     const idaperturainventario = idAperturaState || inventarioActivoState?.idaperturainventario || inventarioActivoState?.id || route.params?.inventarioActivo?.idaperturainventario || route.params?.idaperturainventario || null;
+    const invActivoObj = inventarioActivoState || {
+      idaperturainventario: idaperturainventario,
+      tipo: tipoInventario,
+      estado: inventarioEstado
+    };
     return (
       <ScannerScreen 
         onScan={() => {}} 
@@ -393,10 +568,38 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
         navigation={navigation} 
         user={user}     
         idaperturainventario={idaperturainventario} 
+        inventarioActivo={invActivoObj}
+        tipoInventario={tipoInventario}
         existingProducts={rawItems}
       />
     );
   }
+
+  const handleSalir = () => {
+    Alert.alert(
+      'Salir',
+      '¿Qué acción desea realizar?',
+      [
+        {
+          text: '📋 Menú Inventarios',
+          onPress: () => navigation.replace('SelectInventory', { user })
+        },
+        {
+          text: '🚪 Cerrar Sesión',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await AsyncStorage.removeItem('@auth_credentials');
+            } catch (e) {
+              console.error('Error cerrando sesión:', e);
+            }
+            navigation.replace('Login');
+          }
+        },
+        { text: 'Cancelar', style: 'cancel' }
+      ]
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -407,7 +610,7 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
           <Text style={styles.userRole}>📛 Rol: {user?.role || 'Sin rol'}</Text>
           <Text style={styles.sucursalLogueado}>🏢 Sucursal: {user?.sucursalNombre || 'Q. F. DROGUERIA'}</Text>
         </View>
-        <TouchableOpacity onPress={() => navigation.replace('Login')}>
+        <TouchableOpacity onPress={handleSalir}>
           <Text style={styles.logoutText}>🚪 Salir</Text>
         </TouchableOpacity>
       </View>
@@ -611,6 +814,50 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
         </TouchableOpacity>
       </View>
       
+      {/* Modal Lista Completa de Productos Faltantes */}
+      <Modal
+        visible={modalFaltantesVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setModalFaltantesVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                ⚠️ Productos Faltantes ({productosFaltantes.length})
+              </Text>
+              <TouchableOpacity onPress={() => setModalFaltantesVisible(false)}>
+                <Text style={styles.modalCloseIcon}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalSubtitle}>
+              Los siguientes productos tienen lotes en Droguería pero aún no han sido escaneados en este inventario General:
+            </Text>
+            
+            <FlatList
+              data={productosFaltantes}
+              keyExtractor={(item, index) => `${item.idproducto || index}_${item.codigoBarras || item.codigobarra || index}`}
+              renderItem={({ item, index }) => (
+                <View style={[styles.modalItemRow, index % 2 === 1 && styles.modalItemRowAlt]}>
+                  <Text style={styles.modalItemBarcode}>📷 {item.codigoBarras || item.codigobarra || item.CodigoBarra || 'S/C'}</Text>
+                  <Text style={styles.modalItemName}>{item.descripcion || item.Descripcion || 'Sin descripción'}</Text>
+                  <Text style={styles.modalItemId}>ID Producto: {item.idproducto}</Text>
+                </View>
+              )}
+              style={styles.modalList}
+            />
+
+            <TouchableOpacity 
+              style={styles.modalCloseButton} 
+              onPress={() => setModalFaltantesVisible(false)}
+            >
+              <Text style={styles.modalCloseButtonText}>Entendido / Cerrar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       <View style={styles.bottomSpace} />
     </View>
   );
@@ -854,5 +1101,83 @@ const styles = StyleSheet.create({
   scanButton: { backgroundColor: '#3498db' },
   exportButton: { backgroundColor: '#27ae60' },
   buttonText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
-  bottomSpace: { height: 20 }
+  bottomSpace: { height: 20 },
+
+  // Estilos Modal Faltantes
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    width: '100%',
+    maxHeight: '80%',
+    elevation: 5,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#e74c3c',
+    flex: 1,
+  },
+  modalCloseIcon: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#7f8c8d',
+    paddingHorizontal: 8,
+  },
+  modalSubtitle: {
+    fontSize: 12,
+    color: '#64748b',
+    marginBottom: 10,
+  },
+  modalList: {
+    marginBottom: 12,
+  },
+  modalItemRow: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  modalItemRowAlt: {
+    backgroundColor: '#f8fafc',
+  },
+  modalItemBarcode: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+  },
+  modalItemName: {
+    fontSize: 12,
+    color: '#334155',
+    marginTop: 2,
+  },
+  modalItemId: {
+    fontSize: 10,
+    color: '#94a3b8',
+    marginTop: 1,
+  },
+  modalCloseButton: {
+    backgroundColor: '#34495e',
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modalCloseButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
 });

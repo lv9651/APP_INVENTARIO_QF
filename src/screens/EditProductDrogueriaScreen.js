@@ -15,7 +15,9 @@ import {
   obtenerLotesProductoByCodigoBarra,
   insertProductoInventariadoDrogueria,
   obtenerProductoInventariadoDrogueria,
-  updateProductoInventariadoDrogueria
+  updateProductoInventariadoDrogueria,
+  GuardarEditarSububicacion,
+  ObtenerSububicacion
 } from '../services/api';
 
 export default function EditProductDrogueriaScreen({ route, navigation }) {
@@ -24,8 +26,13 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
     isNew, 
     user, 
     fromScanner, 
-    idaperturainventario 
+    idaperturainventario,
+    inventarioActivo
   } = route.params || {};
+
+  const invActivoParaRegreso = route.params?.inventarioActivo || inventarioActivo || (
+    idaperturainventario ? { idaperturainventario: idaperturainventario } : null
+  );
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -47,6 +54,9 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
   const [lotesOriginales, setLotesOriginales] = useState([]);
   // Filtro visual: 'CON_CANTIDAD' (por defecto) | 'SIN_CANTIDAD' | 'TODOS'
   const [filtroCantidad, setFiltroCantidad] = useState('CON_CANTIDAD');
+  // Sububicaciones del producto
+  const [sububicacion, setSububicacion] = useState('');
+  const [sububicacionOriginal, setSububicacionOriginal] = useState('');
 
   useEffect(() => {
     loadInitialData();
@@ -115,7 +125,7 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
             fechaValidez: item.fechavalidez || null,
             fechaFabricacion: item.fechafabricacion || null,
             cantidadExistencial: cantExist,
-            cantNueva: String(cantExist), // Valor interno por debajo
+            cantNueva: '0',               // Valor interno por defecto (0)
             cantInput: '0',               // Valor visual mostrado en pantalla
             isModified: false,            // Indica si el usuario editó este campo
             idsucursal: item.idsucursal || user?.sucursalId || 66,
@@ -125,6 +135,8 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
 
         setLotes(lotesFormateados);
         setLotesOriginales([]);
+        setSububicacion('');
+        setSububicacionOriginal('');
       } else {
         // ==========================================
         // CASO 2: EDITAR PRODUCTO YA INVENTARIADO
@@ -146,9 +158,10 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
         }
 
         const primerReg = rawList[0];
+        const idProd = primerReg.idproducto || '';
         setProductInfo({
           codigoBarras: primerReg.codigoBarra || barcode,
-          idproducto: String(primerReg.idproducto || ''),
+          idproducto: String(idProd),
           descripcion: primerReg.descripcion || '',
           idlaboratorio: primerReg.idlaboratorio,
           laboratorio: primerReg.laboratorio,
@@ -156,15 +169,30 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
           sucursal: primerReg.nombresucursal || user?.sucursalNombre || 'Q. F. DROGUERIA'
         });
 
+        // Obtener sububicación existente para el producto en edición
+        if (idProd) {
+          try {
+            console.log('🔍 Consultando sububicación para idproducto:', idProd);
+            const subRes = await ObtenerSububicacion(idProd);
+            console.log('📍 Sububicación obtenida:', subRes);
+            const subTexto = subRes?.descripcion || subRes?.Descripcion || '';
+            setSububicacion(String(subTexto || ''));
+            setSububicacionOriginal(String(subTexto || ''));
+          } catch (errSub) {
+            console.error('❌ Error al obtener sububicación:', errSub);
+            setSububicacion('');
+            setSububicacionOriginal('');
+          }
+        } else {
+          setSububicacion('');
+          setSububicacionOriginal('');
+        }
+
         const lotesCargados = rawList.map((item, idx) => {
           const cantExist = item.cantExistencial ?? 0;
-          const yaModificado = item.cant_nueva !== null && item.cant_nueva !== undefined && Math.abs(parseFloat(item.cant_nueva) - parseFloat(cantExist)) > 0.0001;
           const cantNuevaVal = item.cant_nueva !== null && item.cant_nueva !== undefined
             ? String(item.cant_nueva)
-            : String(cantExist);
-
-          // Si ya tenía una cantidad modificada distinta del existencial, se muestra ese valor; de lo contrario '0' visualmente
-          const visualVal = yaModificado ? String(item.cant_nueva) : '0';
+            : '0';
 
           return {
             key: `${item.idproductolote || idx}`,
@@ -175,8 +203,8 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
             fechaFabricacion: item.fechafabricacion || null,
             cantidadExistencial: cantExist,
             cantNueva: cantNuevaVal,
-            cantInput: visualVal,
-            isModified: yaModificado,
+            cantInput: cantNuevaVal,
+            isModified: false,
             idsucursal: item.idsucursal || user?.sucursalId || 66,
             nombresucursal: item.nombresucursal || user?.sucursalNombre || 'Q. F. DROGUERIA'
           };
@@ -193,7 +221,7 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
           text: 'Volver', 
           onPress: () => navigation.navigate('InventoryDrogueria', {
             user: user,
-            inventarioActivo: route.params?.inventarioActivo || { idaperturainventario: idaperturainventario },
+            inventarioActivo: invActivoParaRegreso,
             idaperturainventario: idaperturainventario
           }) 
         }
@@ -273,10 +301,10 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
 
         for (const lote of lotes) {
           const cantExist = parseFloat(lote.cantidadExistencial) || 0;
-          // Si el usuario modificó el campo, toma el valor ingresado; si no lo tocó (0 visual), guarda igual a la cantidad actual
+          // Si el usuario modificó el campo, toma el valor ingresado; si no lo tocó (0 visual), guarda 0 por defecto
           const cantNuevaVal = lote.isModified
             ? (lote.cantInput !== '' && !isNaN(parseFloat(lote.cantInput)) ? parseFloat(lote.cantInput) : 0)
-            : cantExist;
+            : 0;
           const precioc = parseFloat(productInfo.precioc) || 0;
 
           const payload = {
@@ -304,19 +332,39 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
           }
         }
 
+        // Si el usuario ingresó texto en sububicación, se guarda con GuardarEditarSububicacion
+        if (productInfo.idproducto && sububicacion.trim() !== '') {
+          try {
+            console.log('📍 Guardando sububicación para nuevo producto:', productInfo.idproducto, sububicacion.trim());
+            const subRes = await GuardarEditarSububicacion(
+              Number(productInfo.idproducto),
+              sububicacion.trim()
+            );
+            console.log('📍 Resultado GuardarEditarSububicacion:', subRes);
+            if (!subRes || !subRes.success) {
+              errores.push(`Sububicación: ${subRes?.message || 'Error al guardar sububicación'}`);
+              exitoTotal = false;
+            }
+          } catch (errSub) {
+            console.error('❌ Error guardando sububicacion en nuevo escaneo:', errSub);
+            errores.push(`Sububicación: ${errSub.message || 'Error al guardar'}`);
+            exitoTotal = false;
+          }
+        }
+
         if (exitoTotal) {
           Alert.alert('✅ Éxito', 'Lotes registrados correctamente en el inventario.');
           navigation.navigate('InventoryDrogueria', {
             user: user,
-            inventarioActivo: route.params?.inventarioActivo || { idaperturainventario: idaperturainventario },
+            inventarioActivo: invActivoParaRegreso,
             idaperturainventario: idaperturainventario,
             actualizarLista: true
           });
         } else {
-          Alert.alert('⚠️ Advertencia', 'Algunos lotes no pudieron guardarse:\n' + errores.join('\n'));
+          Alert.alert('⚠️ Advertencia', 'Algunos registros no pudieron guardarse:\n' + errores.join('\n'));
           navigation.navigate('InventoryDrogueria', {
             user: user,
-            inventarioActivo: route.params?.inventarioActivo || { idaperturainventario: idaperturainventario },
+            inventarioActivo: invActivoParaRegreso,
             idaperturainventario: idaperturainventario,
             actualizarLista: true
           });
@@ -327,14 +375,15 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
         // ==========================================
         console.log('✏️ Droguería - Actualizando filas modificadas...');
 
+        const sububicacionCambio = sububicacion.trim() !== sububicacionOriginal.trim();
         // Identificar qué filas fueron modificadas por el usuario
         const filasModificadas = lotes.filter(lote => lote.isModified);
 
-        if (filasModificadas.length === 0) {
-          Alert.alert('Información', 'No se realizaron cambios en las cantidades.');
+        if (filasModificadas.length === 0 && !sububicacionCambio) {
+          Alert.alert('Información', 'No se realizaron cambios en las cantidades ni en las sububicaciones.');
           navigation.navigate('InventoryDrogueria', { 
             user: user,
-            inventarioActivo: route.params?.inventarioActivo || { idaperturainventario: idaperturainventario },
+            inventarioActivo: invActivoParaRegreso,
             idaperturainventario: idaperturainventario 
           });
           setSaving(false);
@@ -344,10 +393,31 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
         let exitoTotal = true;
         let errores = [];
 
+        // 1. Si cambió la sububicación, actualizarla
+        if (sububicacionCambio && productInfo.idproducto) {
+          try {
+            console.log('📍 Actualizando sububicación en edición:', productInfo.idproducto, sububicacion.trim());
+            const subRes = await GuardarEditarSububicacion(
+              Number(productInfo.idproducto),
+              sububicacion.trim()
+            );
+            console.log('📍 Resultado GuardarEditarSububicacion (edición):', subRes);
+            if (!subRes || !subRes.success) {
+              exitoTotal = false;
+              errores.push(`Sububicación: ${subRes?.message || 'Error al actualizar sububicación'}`);
+            }
+          } catch (errSub) {
+            console.error('❌ Error actualizando sububicación:', errSub);
+            exitoTotal = false;
+            errores.push(`Sububicación: ${errSub.message || 'Error al actualizar'}`);
+          }
+        }
+
+        // 2. Si hay filas de lotes modificadas, actualizarlas
         for (const fila of filasModificadas) {
           const cantNuevaNum = fila.cantInput !== '' && !isNaN(parseFloat(fila.cantInput))
             ? parseFloat(fila.cantInput)
-            : (parseFloat(fila.cantidadExistencial) || 0);
+            : 0;
 
           const res = await updateProductoInventariadoDrogueria(
             productInfo.codigoBarras,
@@ -363,18 +433,18 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
         }
 
         if (exitoTotal) {
-          Alert.alert('✅ Éxito', 'Cantidades actualizadas correctamente.');
+          Alert.alert('✅ Éxito', 'Cambios actualizados correctamente.');
           navigation.navigate('InventoryDrogueria', {
             user: user,
-            inventarioActivo: route.params?.inventarioActivo || { idaperturainventario: idaperturainventario },
+            inventarioActivo: invActivoParaRegreso,
             idaperturainventario: idaperturainventario,
             actualizarLista: true
           });
         } else {
-          Alert.alert('⚠️ Advertencia', 'Algunos lotes no pudieron actualizarse:\n' + errores.join('\n'));
+          Alert.alert('⚠️ Advertencia', 'Algunos datos no pudieron actualizarse:\n' + errores.join('\n'));
           navigation.navigate('InventoryDrogueria', {
             user: user,
-            inventarioActivo: route.params?.inventarioActivo || { idaperturainventario: idaperturainventario },
+            inventarioActivo: invActivoParaRegreso,
             idaperturainventario: idaperturainventario,
             actualizarLista: true
           });
@@ -391,7 +461,7 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
   const handleCancel = () => {
     navigation.navigate('InventoryDrogueria', { 
       user: user,
-      inventarioActivo: route.params?.inventarioActivo || { idaperturainventario: idaperturainventario },
+      inventarioActivo: invActivoParaRegreso,
       idaperturainventario: idaperturainventario
     });
   };
@@ -418,21 +488,28 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
 
       {/* Tarjeta de Información General */}
       <View style={styles.card}>
-        <Text style={styles.label}>🆔 ID Producto</Text>
-        <TextInput
-          style={[styles.input, styles.disabledInput]}
-          value={productInfo.idproducto}
-          editable={false}
-          placeholder="ID de Producto"
-        />
+        {/* Fila Horizontal: ID Producto y Sucursal */}
+        <View style={styles.rowInputs}>
+          <View style={styles.colInput}>
+            <Text style={styles.label}>🆔 ID Producto</Text>
+            <TextInput
+              style={[styles.input, styles.disabledInput]}
+              value={productInfo.idproducto}
+              editable={false}
+              placeholder="ID de Producto"
+            />
+          </View>
 
-        <Text style={styles.label}>🏢 Sucursal</Text>
-        <TextInput
-          style={[styles.input, styles.disabledInput]}
-          value={productInfo.sucursal}
-          editable={false}
-          placeholder="Sucursal"
-        />
+          <View style={styles.colInput}>
+            <Text style={styles.label}>🏢 Sucursal</Text>
+            <TextInput
+              style={[styles.input, styles.disabledInput]}
+              value={productInfo.sucursal}
+              editable={false}
+              placeholder="Sucursal"
+            />
+          </View>
+        </View>
 
         <Text style={styles.label}>📝 Descripción</Text>
         <TextInput
@@ -442,6 +519,16 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
           multiline
           numberOfLines={2}
           placeholder="Descripción del producto"
+        />
+
+        <Text style={styles.label}>📍 Sububicaciones</Text>
+        <TextInput
+          style={styles.input}
+          value={sububicacion}
+          onChangeText={setSububicacion}
+          placeholder="Ingresar sububicaciones..."
+          placeholderTextColor="#94a3b8"
+          editable={true}
         />
       </View>
 
@@ -592,6 +679,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e2e8f0'
   },
+  rowInputs: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    gap: 10 
+  },
+  colInput: { 
+    flex: 1 
+  },
   label: { fontSize: 13, fontWeight: 'bold', color: '#2c3e50', marginTop: 8, marginBottom: 4 },
   input: { 
     borderWidth: 1, 
@@ -599,7 +694,8 @@ const styles = StyleSheet.create({
     borderRadius: 8, 
     padding: 10, 
     fontSize: 14, 
-    backgroundColor: '#fff' 
+    backgroundColor: '#fff',
+    color: '#2c3e50'
   },
   disabledInput: { backgroundColor: '#f8fafc', color: '#475569' },
   textArea: { minHeight: 50, textAlignVertical: 'top' },
