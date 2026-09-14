@@ -20,6 +20,124 @@ import {
   ObtenerSububicacion
 } from '../services/api';
 
+/**
+ * Normaliza una fecha a formato YYYY-MM-DD para evitar fallos de agrupación por hora/zona.
+ */
+const normalizarFecha = (fecha) => {
+  if (!fecha) return 'SIN_FECHA';
+  try {
+    const str = String(fecha).trim();
+    const part = str.split('T')[0].split(' ')[0].trim();
+    if (part.length === 10 && part.includes('-')) {
+      return part;
+    }
+    const d = new Date(fecha);
+    if (!isNaN(d.getTime())) {
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    }
+    return part;
+  } catch (e) {
+    return String(fecha);
+  }
+};
+
+/**
+ * Obtiene el timestamp numérico de una fecha para ordenar de más reciente a más antigua.
+ */
+const obtenerTimestamp = (fecha) => {
+  if (!fecha) return 0;
+  try {
+    const d = new Date(fecha);
+    const t = d.getTime();
+    return isNaN(t) ? 0 : t;
+  } catch (e) {
+    return 0;
+  }
+};
+
+/**
+ * Agrupa los lotes con características idénticas (numeroLote, fechaValidez, idalmacensucursal).
+ * La cantidadExistencial del grupo es la suma de los sublotes (para filtros).
+ * En la tabla visual, cantidadExistencial permanece oculta.
+ */
+const agruparLotes = (rawList, isEditMode = false, defaultSucursalId = 66, defaultSucursalNombre = 'Q. F. DROGUERIA') => {
+  const gruposMap = new Map();
+
+  rawList.forEach((item, idx) => {
+    const numLote = String(item.numeroLote || item.numLote || 'S/L').trim();
+    const fValidezRaw = item.fechaValidez || item.fechavalidez || null;
+    const fValidezNorm = normalizarFecha(fValidezRaw);
+    const idAlmSuc = item.idalmacensucursal !== null && item.idalmacensucursal !== undefined
+      ? String(item.idalmacensucursal).trim()
+      : '0';
+
+    const groupKey = `${numLote.toUpperCase()}__${fValidezNorm}__${idAlmSuc}`;
+
+    const cantExistNum = parseFloat(item.cantidadExistencial ?? item.cantExistencial ?? 0) || 0;
+    const cantNuevaNum = parseFloat(item.cant_nueva ?? item.cantNueva ?? 0) || 0;
+
+    const subLoteObj = {
+      key: `${item.idproductolote || idx}`,
+      idproductolote: item.idproductolote,
+      idalmacensucursal: item.idalmacensucursal,
+      numeroLote: numLote,
+      fechaRecepcion: item.fechaRecepcion || item.fecharecepcion || null,
+      fechaValidez: fValidezRaw,
+      fechaFabricacion: item.fechaFabricacion || item.fechafabricacion || null,
+      cantidadExistencial: cantExistNum,
+      cantNueva: String(cantNuevaNum),
+      cant_nueva: cantNuevaNum,
+      idsucursal: item.idsucursal || defaultSucursalId,
+      nombresucursal: item.nombresucursal || defaultSucursalNombre
+    };
+
+    if (!gruposMap.has(groupKey)) {
+      gruposMap.set(groupKey, {
+        key: groupKey,
+        groupKey: groupKey,
+        numeroLote: numLote,
+        fechaValidez: fValidezRaw,
+        idalmacensucursal: item.idalmacensucursal,
+        idsucursal: item.idsucursal || defaultSucursalId,
+        nombresucursal: item.nombresucursal || defaultSucursalNombre,
+        cantidadExistencial: cantExistNum,
+        subLotes: [subLoteObj]
+      });
+    } else {
+      const grupo = gruposMap.get(groupKey);
+      grupo.cantidadExistencial += cantExistNum;
+      grupo.subLotes.push(subLoteObj);
+    }
+  });
+
+  return Array.from(gruposMap.values()).map(grupo => {
+    // Ordenar sublotes: fechaRecepcion más reciente primero. Desempate por idproductolote desc.
+    grupo.subLotes.sort((a, b) => {
+      const tA = obtenerTimestamp(a.fechaRecepcion);
+      const tB = obtenerTimestamp(b.fechaRecepcion);
+      if (tB !== tA) return tB - tA;
+      return (Number(b.idproductolote) || 0) - (Number(a.idproductolote) || 0);
+    });
+
+    let cantInputInicial = '0';
+    if (isEditMode) {
+      // En modo edición, el sublote más reciente contiene el valor asignado previamente
+      const cantMasReciente = grupo.subLotes[0]?.cantNueva;
+      cantInputInicial = cantMasReciente !== undefined && cantMasReciente !== null ? String(cantMasReciente) : '0';
+    }
+
+    return {
+      ...grupo,
+      cantInput: cantInputInicial,
+      cantNueva: cantInputInicial,
+      isModified: false
+    };
+  });
+};
+
 export default function EditProductDrogueriaScreen({ route, navigation }) {
   const { 
     barcode, 
@@ -27,11 +145,15 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
     user, 
     fromScanner, 
     idaperturainventario,
-    inventarioActivo
+    inventarioActivo,
+    idubicacion
   } = route.params || {};
 
+  const idUbicacionFinal = idubicacion || route.params?.inventarioActivo?.idubicacion || inventarioActivo?.idubicacion || null;
+  const idAperturaFinal = idaperturainventario || route.params?.inventarioActivo?.idaperturainventario || route.params?.inventarioActivo?.id || inventarioActivo?.idaperturainventario || inventarioActivo?.id || null;
+
   const invActivoParaRegreso = route.params?.inventarioActivo || inventarioActivo || (
-    idaperturainventario ? { idaperturainventario: idaperturainventario } : null
+    idAperturaFinal ? { idaperturainventario: idAperturaFinal, idubicacion: idUbicacionFinal } : null
   );
 
   const [loading, setLoading] = useState(true);
@@ -45,7 +167,8 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
     idlaboratorio: null,
     laboratorio: '',
     precioc: 0,
-    sucursal: user?.sucursalNombre || 'Q. F. DROGUERIA'
+    sucursal: user?.sucursalNombre || 'Q. F. DROGUERIA',
+    multiplo: 1
   });
 
   // Lista de lotes para la tabla
@@ -69,11 +192,11 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
         // ==========================================
         // CASO 1: VIENE DEL ESCÁNER / NUEVO PRODUCTO
         // ==========================================
-        console.log('📱 Droguería - Cargando datos para nuevo escaneo:', barcode);
+        console.log('📱 Droguería - Cargando datos para nuevo escaneo:', barcode, 'idubicacion:', idUbicacionFinal);
 
         const [infoRes, lotesRes] = await Promise.all([
-          obtenerProductoInfoByCodigoBarras(barcode),
-          obtenerLotesProductoByCodigoBarra(barcode)
+          obtenerProductoInfoByCodigoBarras(barcode, idUbicacionFinal),
+          obtenerLotesProductoByCodigoBarra(barcode, idUbicacionFinal)
         ]);
 
         console.log('📦 Info producto recibida:', infoRes);
@@ -97,6 +220,7 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
         const idlab = rawInfo.idlaboratorio || null;
         const lab = rawInfo.laboratorio || '';
         const precioc = rawInfo.precioc || 0;
+        const multiplo = rawInfo.multiplo || 1;
 
         setProductInfo({
           codigoBarras: codigo,
@@ -105,7 +229,8 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
           idlaboratorio: idlab,
           laboratorio: lab,
           precioc: precioc,
-          sucursal: user?.sucursalNombre || 'Q. F. DROGUERIA'
+          sucursal: user?.sucursalNombre || 'Q. F. DROGUERIA',
+          multiplo: multiplo
         });
 
         // Extraer lista de lotes
@@ -115,25 +240,14 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
           Alert.alert('⚠️ Advertencia', `El producto (Código: ${barcode}) no tiene lotes registrados.`);
         }
 
-        const lotesFormateados = rawLotesList.map((item, idx) => {
-          const cantExist = item.cantidadExistencial ?? 0;
-          return {
-            key: `${item.idproductolote || idx}`,
-            idproductolote: item.idproductolote,
-            numeroLote: item.numeroLote || 'S/L',
-            fechaRecepcion: item.fecharecepcion || null,
-            fechaValidez: item.fechavalidez || null,
-            fechaFabricacion: item.fechafabricacion || null,
-            cantidadExistencial: cantExist,
-            cantNueva: '0',               // Valor interno por defecto (0)
-            cantInput: '0',               // Valor visual mostrado en pantalla
-            isModified: false,            // Indica si el usuario editó este campo
-            idsucursal: item.idsucursal || user?.sucursalId || 66,
-            nombresucursal: item.nombresucursal || 'Q. F. DROGUERIA'
-          };
-        });
+        const lotesAgrupados = agruparLotes(
+          rawLotesList, 
+          false, 
+          user?.sucursalId || 66, 
+          user?.sucursalNombre || 'Q. F. DROGUERIA'
+        );
 
-        setLotes(lotesFormateados);
+        setLotes(lotesAgrupados);
         setLotesOriginales([]);
         setSububicacion('');
         setSububicacionOriginal('');
@@ -166,14 +280,15 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
           idlaboratorio: primerReg.idlaboratorio,
           laboratorio: primerReg.laboratorio,
           precioc: primerReg.precioc,
-          sucursal: primerReg.nombresucursal || user?.sucursalNombre || 'Q. F. DROGUERIA'
+          sucursal: primerReg.nombresucursal || user?.sucursalNombre || 'Q. F. DROGUERIA',
+          multiplo: primerReg.multiplo
         });
 
         // Obtener sububicación existente para el producto en edición
         if (idProd) {
           try {
-            console.log('🔍 Consultando sububicación para idproducto:', idProd);
-            const subRes = await ObtenerSububicacion(idProd);
+            console.log('🔍 Consultando sububicación para idapertura:', idAperturaFinal, 'idproducto:', idProd);
+            const subRes = await ObtenerSububicacion(idAperturaFinal, idProd);
             console.log('📍 Sububicación obtenida:', subRes);
             const subTexto = subRes?.descripcion || subRes?.Descripcion || '';
             setSububicacion(String(subTexto || ''));
@@ -188,31 +303,16 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
           setSububicacionOriginal('');
         }
 
-        const lotesCargados = rawList.map((item, idx) => {
-          const cantExist = item.cantExistencial ?? 0;
-          const cantNuevaVal = item.cant_nueva !== null && item.cant_nueva !== undefined
-            ? String(item.cant_nueva)
-            : '0';
+        const lotesAgrupados = agruparLotes(
+          rawList, 
+          true, 
+          primerReg.idsucursal || user?.sucursalId || 66, 
+          primerReg.nombresucursal || user?.sucursalNombre || 'Q. F. DROGUERIA'
+        );
 
-          return {
-            key: `${item.idproductolote || idx}`,
-            idproductolote: item.idproductolote,
-            numeroLote: item.numLote || 'S/L',
-            fechaRecepcion: item.fecharecepcion || null,
-            fechaValidez: item.fechavalidez || null,
-            fechaFabricacion: item.fechafabricacion || null,
-            cantidadExistencial: cantExist,
-            cantNueva: cantNuevaVal,
-            cantInput: cantNuevaVal,
-            isModified: false,
-            idsucursal: item.idsucursal || user?.sucursalId || 66,
-            nombresucursal: item.nombresucursal || user?.sucursalNombre || 'Q. F. DROGUERIA'
-          };
-        });
-
-        setLotes(lotesCargados);
+        setLotes(lotesAgrupados);
         // Guardamos copia de los valores iniciales para comparar cambios
-        setLotesOriginales(JSON.parse(JSON.stringify(lotesCargados)));
+        setLotesOriginales(JSON.parse(JSON.stringify(lotesAgrupados)));
       }
     } catch (error) {
       console.error('❌ Error en loadInitialData:', error);
@@ -256,7 +356,7 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
   const handleCantidadChange = (text, keyOrId) => {
     setLotes(prevLotes =>
       prevLotes.map(lote =>
-        (lote.key === keyOrId || lote.idproductolote === keyOrId)
+        (lote.key === keyOrId || lote.groupKey === keyOrId || lote.idproductolote === keyOrId)
           ? { 
               ...lote, 
               cantInput: text,
@@ -299,44 +399,60 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
         let exitoTotal = true;
         let errores = [];
 
-        for (const lote of lotes) {
-          const cantExist = parseFloat(lote.cantidadExistencial) || 0;
-          // Si el usuario modificó el campo, toma el valor ingresado; si no lo tocó (0 visual), guarda 0 por defecto
-          const cantNuevaVal = lote.isModified
-            ? (lote.cantInput !== '' && !isNaN(parseFloat(lote.cantInput)) ? parseFloat(lote.cantInput) : 0)
+        for (const grupo of lotes) {
+          const cantNuevaTotal = grupo.isModified
+            ? (grupo.cantInput !== '' && !isNaN(parseFloat(grupo.cantInput)) ? parseFloat(grupo.cantInput) : 0)
             : 0;
           const precioc = parseFloat(productInfo.precioc) || 0;
 
-          const payload = {
-            codigobarra: productInfo.codigoBarras,
-            idProducto: productInfo.idproducto,
-            NombreProducto: productInfo.descripcion,
-            idlaboratorio: productInfo.idlaboratorio,
-            laboratorio: productInfo.laboratorio,
-            precioc: precioc,
-            idproductolote: lote.idproductolote,
-            numLote: lote.numeroLote,
-            fecharecepcion: lote.fechaRecepcion,
-            fechavalidez: lote.fechaValidez,
-            fechafabricacion: lote.fechaFabricacion,
-            cantExistencial: cantExist,
-            cant_Nueva: cantNuevaVal,
-            idsucursal: lote.idsucursal,
-            nombresucursal: lote.nombresucursal
-          };
+          // Asegurar orden de sublotes: fechaRecepcion más reciente primero
+          const sortedSubLotes = [...grupo.subLotes].sort((a, b) => {
+            const tA = obtenerTimestamp(a.fechaRecepcion);
+            const tB = obtenerTimestamp(b.fechaRecepcion);
+            if (tB !== tA) return tB - tA;
+            return (Number(b.idproductolote) || 0) - (Number(a.idproductolote) || 0);
+          });
 
-          const res = await insertProductoInventariadoDrogueria(payload, user, idaperturainventario);
-          if (!res || !res.success) {
-            exitoTotal = false;
-            errores.push(`Lote ${lote.numeroLote}: ${res?.message || 'Error al guardar'}`);
+          for (let i = 0; i < sortedSubLotes.length; i++) {
+            const subLote = sortedSubLotes[i];
+            const cantExist = parseFloat(subLote.cantidadExistencial ?? subLote.cantExistencial ?? 0) || 0;
+            // Solo el lote con la fechaRecepcion más reciente recibe la cantidad a ajustar; los demás reciben 0
+            const cantNuevaVal = (i === 0) ? cantNuevaTotal : 0;
+
+            const payload = {
+              codigobarra: productInfo.codigoBarras,
+              idProducto: productInfo.idproducto,
+              NombreProducto: productInfo.descripcion,
+              idlaboratorio: productInfo.idlaboratorio,
+              laboratorio: productInfo.laboratorio,
+              precioc: precioc,
+              multiplo: productInfo.multiplo,
+              idproductolote: subLote.idproductolote,
+              idalmacensucursal: subLote.idalmacensucursal,
+              numLote: subLote.numeroLote,
+              fecharecepcion: subLote.fechaRecepcion,
+              fechavalidez: subLote.fechaValidez,
+              fechafabricacion: subLote.fechaFabricacion,
+              cantExistencial: cantExist,
+              cant_Nueva: cantNuevaVal,
+              idsucursal: subLote.idsucursal || user?.sucursalId || 66,
+              nombresucursal: subLote.nombresucursal || 'Q. F. DROGUERIA'
+            };
+
+            const res = await insertProductoInventariadoDrogueria(payload, user, idaperturainventario);
+            if (!res || !res.success) {
+              exitoTotal = false;
+              errores.push(`Lote ${subLote.numeroLote}: ${res?.message || 'Error al guardar'}`);
+            }
           }
         }
 
         // Si el usuario ingresó texto en sububicación, se guarda con GuardarEditarSububicacion
         if (productInfo.idproducto && sububicacion.trim() !== '') {
           try {
-            console.log('📍 Guardando sububicación para nuevo producto:', productInfo.idproducto, sububicacion.trim());
+            console.log('📍 Guardando sububicación para nuevo producto:', idAperturaFinal, productInfo.idproducto, sububicacion.trim());
             const subRes = await GuardarEditarSububicacion(
+              idAperturaFinal,
               Number(productInfo.idproducto),
               sububicacion.trim()
             );
@@ -396,8 +512,9 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
         // 1. Si cambió la sububicación, actualizarla
         if (sububicacionCambio && productInfo.idproducto) {
           try {
-            console.log('📍 Actualizando sububicación en edición:', productInfo.idproducto, sububicacion.trim());
+            console.log('📍 Actualizando sububicación en edición:', idAperturaFinal, productInfo.idproducto, sububicacion.trim());
             const subRes = await GuardarEditarSububicacion(
+              idAperturaFinal,
               Number(productInfo.idproducto),
               sububicacion.trim()
             );
@@ -413,22 +530,49 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
           }
         }
 
-        // 2. Si hay filas de lotes modificadas, actualizarlas
-        for (const fila of filasModificadas) {
-          const cantNuevaNum = fila.cantInput !== '' && !isNaN(parseFloat(fila.cantInput))
-            ? parseFloat(fila.cantInput)
+        // 2. Si hay grupos de lotes modificados, actualizarlos
+        for (const grupo of filasModificadas) {
+          const cantNuevaNum = grupo.cantInput !== '' && !isNaN(parseFloat(grupo.cantInput))
+            ? parseFloat(grupo.cantInput)
             : 0;
 
+          const sortedSubLotes = [...grupo.subLotes].sort((a, b) => {
+            const tA = obtenerTimestamp(a.fechaRecepcion);
+            const tB = obtenerTimestamp(b.fechaRecepcion);
+            if (tB !== tA) return tB - tA;
+            return (Number(b.idproductolote) || 0) - (Number(a.idproductolote) || 0);
+          });
+
+          // El lote con la fechaRecepcion más reciente recibe la cantidad a ajustar
+          const loteMasReciente = sortedSubLotes[0];
           const res = await updateProductoInventariadoDrogueria(
             productInfo.codigoBarras,
-            fila.idproductolote,
+            loteMasReciente.idproductolote,
             cantNuevaNum,
             idaperturainventario
           );
 
           if (!res || !res.success) {
             exitoTotal = false;
-            errores.push(`Lote ${fila.numeroLote}: ${res?.message || 'Error al actualizar'}`);
+            errores.push(`Lote ${loteMasReciente.numeroLote} (ID: ${loteMasReciente.idproductolote}): ${res?.message || 'Error al actualizar'}`);
+          }
+
+          // Los demás sublotes del grupo se aseguran en 0 si no estaban ya en 0
+          for (let i = 1; i < sortedSubLotes.length; i++) {
+            const sub = sortedSubLotes[i];
+            const currentCant = parseFloat(sub.cantNueva ?? sub.cant_nueva ?? 0) || 0;
+            if (currentCant !== 0) {
+              const resSub = await updateProductoInventariadoDrogueria(
+                productInfo.codigoBarras,
+                sub.idproductolote,
+                0,
+                idaperturainventario
+              );
+              if (!resSub || !resSub.success) {
+                exitoTotal = false;
+                errores.push(`Lote ${sub.numeroLote} (ID: ${sub.idproductolote}): ${resSub?.message || 'Error al actualizar a 0'}`);
+              }
+            }
           }
         }
 
@@ -625,7 +769,7 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
                 <TextInput
                   style={styles.ajustarInput}
                   value={lote.cantInput}
-                  onChangeText={(text) => handleCantidadChange(text, lote.key || lote.idproductolote)}
+                  onChangeText={(text) => handleCantidadChange(text, lote.key || lote.groupKey || lote.idproductolote)}
                   placeholder="0"
                   placeholderTextColor="#bbb"
                   keyboardType="numeric"

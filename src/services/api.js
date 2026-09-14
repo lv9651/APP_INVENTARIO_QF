@@ -412,11 +412,15 @@ export const insertTomaInventario = async (productData, user,idaperturainventari
   }
 };
 
-export const obtenerProductoInfoByCodigoBarras = async (codigoBarras) => {
+export const obtenerProductoInfoByCodigoBarras = async (codigoBarras, idubicacion = null) => {
   try {
     if (!codigoBarras) return null;
     const cleanCode = encodeURIComponent(String(codigoBarras).trim());
-    const response = await fetch(`${API_BASE_URL}/api/Inventario/obtenerProductoInfoByCodigoBarras/${cleanCode}`);
+    let url = `${API_BASE_URL}/api/Inventario/obtenerProductoInfoByCodigoBarras/${cleanCode}`;
+    if (idubicacion !== null && idubicacion !== undefined) {
+      url += `?idubicacion=${encodeURIComponent(idubicacion)}`;
+    }
+    const response = await fetch(url);
 
     if (!response.ok) {
       console.warn(`[DROGUERIA] HTTP ${response.status} al obtener info para código: ${codigoBarras}`);
@@ -432,11 +436,15 @@ export const obtenerProductoInfoByCodigoBarras = async (codigoBarras) => {
   }
 };
 
-export const obtenerLotesProductoByCodigoBarra = async (codigoBarras) => {
+export const obtenerLotesProductoByCodigoBarra = async (codigoBarras, idubicacion = null) => {
   try {
     if (!codigoBarras) return null;
     const cleanCode = encodeURIComponent(String(codigoBarras).trim());
-    const response = await fetch(`${API_BASE_URL}/api/Inventario/obtenerLotesProductoByCodigoBarra/${cleanCode}`);
+    let url = `${API_BASE_URL}/api/Inventario/obtenerLotesProductoByCodigoBarra/${cleanCode}`;
+    if (idubicacion !== null && idubicacion !== undefined) {
+      url += `?idubicacion=${encodeURIComponent(idubicacion)}`;
+    }
+    const response = await fetch(url);
 
     if (!response.ok) {
       console.warn(`[DROGUERIA] HTTP ${response.status} al obtener lotes para código: ${codigoBarras}`);
@@ -465,7 +473,9 @@ export const insertProductoInventariadoDrogueria = async (productData, user, ida
       idlaboratorio: productData.idlaboratorio,
       laboratorio: productData.laboratorio,
       precioc: productData.precioc,
+      multiplo: productData.multiplo,
       idproductolote: productData.idproductolote,
+      idalmacensucursal: productData.idalmacensucursal,
       NumLote: productData.numLote || productData.numeroLote || productData.NumLote,
       fecharecepcion: productData.fecharecepcion,
       fechavalidez: productData.fechavalidez,
@@ -651,18 +661,23 @@ export const eliminarProductoInventariadoDrogueria = async (codigoBarra, idapert
   }  
 };
 
-export const iniciarInventarioDrogueria = async (tipo, usuario, idsucursal) => {
+export const iniciarInventarioDrogueria = async (tipo, usuario, idsucursal, idubicacion = null) => {
   try {
+    const payload = {
+      tipo: tipo,
+      usuario: usuario,
+      idsucursal: String(idsucursal || '')
+    };
+    if (idubicacion !== null && idubicacion !== undefined) {
+      payload.idubicacion = Number(idubicacion);
+    }
+
     const response = await fetch(`${API_BASE_URL}/api/Inventario/iniciarInventarioDrogueria`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        tipo: tipo,
-        usuario: usuario,
-        idsucursal: String(idsucursal || '')
-      })
+      body: JSON.stringify(payload)
     });
     
     const result = await response.json();
@@ -718,6 +733,7 @@ export const exportarReporteExcelDrogueria = async (payload) => {
       fechaInicio: payload.fechaInicioInventario,
       fechaFin: payload.fechaFinInventario,
       tipo: payload.tipoInventario,
+      idubicacion: payload.idubicacion,
       totalFilas: payload.rows?.length || 0
     });
 
@@ -765,9 +781,148 @@ export const exportarReporteExcelDrogueria = async (payload) => {
 };
 
 /**
+ * Normaliza una fecha a formato YYYY-MM-DD para agrupación consistente en Excel.
+ */
+const normalizarFechaExcel = (fecha) => {
+  if (!fecha) return '';
+  try {
+    const str = String(fecha).trim();
+    const part = str.split('T')[0].split(' ')[0].trim();
+    if (part.length === 10 && part.includes('-')) {
+      return part;
+    }
+    const d = new Date(fecha);
+    if (!isNaN(d.getTime())) {
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    }
+    return part;
+  } catch (e) {
+    return String(fecha);
+  }
+};
+
+/**
+ * Obtiene el timestamp numérico de una fecha para ordenar de más reciente a más antigua.
+ */
+const obtenerTimestampExcel = (fecha) => {
+  if (!fecha) return 0;
+  try {
+    const d = new Date(fecha);
+    const t = d.getTime();
+    return isNaN(t) ? 0 : t;
+  } catch (e) {
+    return 0;
+  }
+};
+
+/**
+ * Agrupa los lotes de Droguería por producto, numLote, fechaValidez e idalmacensucursal para el reporte Excel.
+ * - stockSistema: Suma de las cantidades existenciales del grupo de lotes.
+ * - stockFisico: Cantidad asignada al lote con la fechaRecepcion más reciente (los otros están en 0).
+ * - Excluye del reporte si tanto stockSistema como stockFisico son 0.
+ * - diferencia: stockFisico - stockSistema.
+ * - valorizado: diferencia * precioc.
+ * 
+ * @param {Array} rawList Lista plana de registros de productos/lotes.
+ * @returns {Array} Lista de filas consolidadas y filtradas listas para el Excel.
+ */
+export const agruparItemsParaExcelDrogueria = (rawList) => {
+  if (!Array.isArray(rawList) || rawList.length === 0) return [];
+
+  const gruposMap = new Map();
+
+  rawList.forEach((item, idx) => {
+    const codBarra = String(item.CodigoBarra || item.codigobarra || item.codigoBarra || '').trim();
+    const numLote = String(item.NumLote || item.numLote || item.numeroLote || 'S/L').trim();
+    const fValidezRaw = item.fechavalidez || item.fechaValidez || null;
+    const fValidezNorm = normalizarFechaExcel(fValidezRaw);
+    const idAlmSuc = item.idalmacensucursal !== null && item.idalmacensucursal !== undefined
+      ? String(item.idalmacensucursal).trim()
+      : '0';
+
+    const groupKey = `${codBarra}__${numLote.toUpperCase()}__${fValidezNorm}__${idAlmSuc}`;
+
+    const stockSistema = parseFloat(item.CantExistencial ?? item.cantExistencial ?? item.cantidadExistencial ?? 0) || 0;
+    const stockFisico = parseFloat(item.Cant_nueva ?? item.cant_Nueva ?? item.cant_nueva ?? 0) || 0;
+    const fRecepcion = item.fecharecepcion || item.fechaRecepcion || null;
+    const idProdLote = item.idproductolote ?? idx;
+
+    const subItem = {
+      ...item,
+      stockSistema,
+      stockFisico,
+      fechaRecepcion: fRecepcion,
+      idproductolote: idProdLote
+    };
+
+    if (!gruposMap.has(groupKey)) {
+      gruposMap.set(groupKey, {
+        groupKey,
+        codigoBarras: codBarra,
+        descripcion: item.Descripcion || item.descripcion || '',
+        laboratorio: item.laboratorio || item.Laboratorio || '',
+        numLote: numLote,
+        fechaVencimiento: fValidezNorm,
+        precioc: parseFloat(item.precioc) || 0,
+        subItems: [subItem]
+      });
+    } else {
+      const grupo = gruposMap.get(groupKey);
+      grupo.subItems.push(subItem);
+    }
+  });
+
+  const gruposConsolidados = [];
+
+  for (const grupo of gruposMap.values()) {
+    // 1. stockSistema = suma de existencias de todos los registros del grupo
+    const totalStockSistema = grupo.subItems.reduce((acc, curr) => acc + curr.stockSistema, 0);
+
+    // 2. Ordenar sublotes para encontrar el que tiene fechaRecepcion más reciente
+    grupo.subItems.sort((a, b) => {
+      const tA = obtenerTimestampExcel(a.fechaRecepcion);
+      const tB = obtenerTimestampExcel(b.fechaRecepcion);
+      if (tB !== tA) return tB - tA;
+      return (Number(b.idproductolote) || 0) - (Number(a.idproductolote) || 0);
+    });
+
+    // 3. stockFisico = cantidad asignada al sublote con fechaRecepcion más reciente (los demás tienen 0)
+    const totalStockFisico = grupo.subItems[0]?.stockFisico !== undefined
+      ? grupo.subItems[0].stockFisico
+      : 0;
+
+    // 4. Filtrar: si stockSistema es 0 y stockFisico también es 0, NO se incluye en el reporte
+    const ambosCero = Math.abs(totalStockSistema) < 0.0001 && Math.abs(totalStockFisico) < 0.0001;
+    if (ambosCero) {
+      continue;
+    }
+
+    const diferencia = totalStockFisico - totalStockSistema;
+    const valorizado = diferencia * grupo.precioc;
+
+    gruposConsolidados.push({
+      codigoBarras: grupo.codigoBarras,
+      descripcion: grupo.descripcion,
+      laboratorio: grupo.laboratorio,
+      numLote: grupo.numLote,
+      fechaVencimiento: grupo.fechaVencimiento,
+      stockSistema: totalStockSistema,
+      stockFisico: totalStockFisico,
+      diferencia: diferencia,
+      valorizado: valorizado,
+      precioc: grupo.precioc
+    });
+  }
+
+  return gruposConsolidados;
+};
+
+/**
  * Función auxiliar para consultar productos de una apertura, filtrar diferencias y generar el Excel
  * @param {Object} inventario Objeto de inventario con idaperturainventario (o id), fecha_inicio, fecha_fin, tipo
- * @param {Array} [rawItemsList] Lista opcional de items ya cargados en memoria. Si no se pasa, se consultan de la BD.
  * @returns {Promise<{success: boolean, fileUri?: string, message?: string}>}
  */
 export const exportarExcelDrogueriaPorApertura = async (inventario) => {
@@ -778,19 +933,14 @@ export const exportarExcelDrogueriaPorApertura = async (inventario) => {
       return { success: false, message: 'No se encontró el ID de apertura de este inventario.' };
     }
     console.log(`📦 Consultando productos de apertura ${idApertura} para exportar Excel...`);
-    productos = await obtenerTodosProductoInventariadoDrogueria(null, idApertura);
+    const productos = await obtenerTodosProductoInventariadoDrogueria(null, idApertura);
 
     if (!productos || productos.length === 0) {
       return { success: false, message: 'No hay productos registrados en este inventario.' };
     }
 
-    // Filtrar: si cantidad existencial es 0 y cantidad nueva también es 0, NO se incluye; caso contrario SÍ se incluye
-    const itemsParaReporte = productos.filter(item => {
-      const stockSistema = parseFloat(item.CantExistencial ?? item.cantExistencial ?? 0) || 0;
-      const stockFisico = parseFloat(item.Cant_nueva ?? item.cant_Nueva ?? item.cant_nueva ?? 0) || 0;
-      const ambosCero = Math.abs(stockSistema) < 0.0001 && Math.abs(stockFisico) < 0.0001;
-      return !ambosCero;
-    });
+    // Agrupar y filtrar lotes idénticos para el reporte
+    const itemsParaReporte = agruparItemsParaExcelDrogueria(productos);
 
     if (itemsParaReporte.length === 0) {
       return {
@@ -799,30 +949,40 @@ export const exportarExcelDrogueriaPorApertura = async (inventario) => {
       };
     }
 
+    let idUbicacionVal = inventario?.idubicacion ?? inventario?.idUbicacion ?? null;
+    if (idUbicacionVal === null || idUbicacionVal === undefined) {
+      try {
+        const estadoRes = await getInventarioEstado();
+        const lista = Array.isArray(estadoRes?.data) ? estadoRes.data : (estadoRes?.estado ? [estadoRes] : []);
+        const encontrado = lista.find(item => 
+          String(item.idaperturainventario || item.id) === String(idApertura)
+        );
+        if (encontrado && (encontrado.idubicacion ?? encontrado.idUbicacion) !== undefined) {
+          idUbicacionVal = encontrado.idubicacion ?? encontrado.idUbicacion;
+        }
+      } catch (e) {
+        console.log('No se pudo consultar estado para idubicacion en Excel:', e);
+      }
+    }
+
     const payload = {
       fechaInicioInventario: inventario?.fecha_inicio || null,
       fechaFinInventario: inventario?.fecha_fin || null,
       tipoInventario: inventario?.tipo || 'PARCIAL',
-      rows: itemsParaReporte.map((item, index) => {
-        const stockSistema = parseFloat(item.CantExistencial ?? item.cantExistencial ?? 0) || 0;
-        const stockFisico = parseFloat(item.Cant_nueva ?? item.cant_Nueva ?? item.cant_nueva ?? 0) || 0;
-        const precioc = parseFloat(item.precioc) || 0;
-        const diferencia = stockFisico - stockSistema;
-
-        return {
-          n: index + 1,
-          codigoBarras: item.CodigoBarra || item.codigobarra || item.codigoBarra || '',
-          descripcion: item.Descripcion || item.descripcion || '',
-          laboratorio: item.laboratorio || '',
-          numLote: item.NumLote || item.numLote || 'S/L',
-          fechaVencimiento: item.fechavalidez ? String(item.fechavalidez).split('T')[0] : '',
-          stockSistema: stockSistema,
-          stockFisico: stockFisico,
-          diferencia: diferencia,
-          valorizado: diferencia * precioc,
-          observaciones: ''
-        };
-      })
+      idubicacion: idUbicacionVal !== null && idUbicacionVal !== undefined ? Number(idUbicacionVal) : null,
+      rows: itemsParaReporte.map((item, index) => ({
+        n: index + 1,
+        codigoBarras: item.codigoBarras,
+        descripcion: item.descripcion,
+        laboratorio: item.laboratorio,
+        numLote: item.numLote,
+        fechaVencimiento: item.fechaVencimiento,
+        stockSistema: item.stockSistema,
+        stockFisico: item.stockFisico,
+        diferencia: item.diferencia,
+        valorizado: item.valorizado,
+        observaciones: ''
+      }))
     };
 
     return await exportarReporteExcelDrogueria(payload);
@@ -832,26 +992,44 @@ export const exportarExcelDrogueriaPorApertura = async (inventario) => {
   }
 };
 
-export const GuardarEditarSububicacion = async (idproducto, sububicaciones) => {
-  try{
+export const GuardarEditarSububicacion = async (arg1, arg2, arg3) => {
+  try {
+    let idaperturainventario, idproducto, sububicaciones;
+    if (typeof arg2 === 'string' && arg3 !== undefined) {
+      // Formato alternativo: (idproducto, sububicaciones, idaperturainventario)
+      idproducto = arg1;
+      sububicaciones = arg2;
+      idaperturainventario = arg3;
+    } else {
+      // Formato principal: (idaperturainventario, idproducto, sububicaciones)
+      idaperturainventario = arg1;
+      idproducto = arg2;
+      sububicaciones = arg3;
+    }
+
+    const payload = {
+      idaperturainventario: idaperturainventario !== null && idaperturainventario !== undefined ? Number(idaperturainventario) : null,
+      idproducto: idproducto !== null && idproducto !== undefined ? Number(idproducto) : null,
+      sububicaciones: sububicaciones || ''
+    };
+
+    console.log('📤 [GuardarEditarSububicacion] Enviando payload:', payload);
+
     const response = await fetch(`${API_BASE_URL}/api/Inventario/GuardarEditarSububicacion`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         },
-        body: JSON.stringify({
-          idproducto: idproducto,
-          sububicaciones: sububicaciones
-        })
+        body: JSON.stringify(payload)
       }
     );
 
-    if (!response.ok){
+    if (!response.ok) {
       return {
         success: false,
         message: 'Ocurrio un error al guardar la sububicacion.'
-      }
+      };
     }
 
     const result = await response.json();
@@ -861,42 +1039,49 @@ export const GuardarEditarSububicacion = async (idproducto, sububicaciones) => {
       message: result.message || (response.ok ? 'Sububicación procesada correctamente' : 'Error al guardar')
     };
   }
-  catch (error){
-    return {success: false, message: error.message}
+  catch (error) {
+    return { success: false, message: error.message };
   }
-}
+};
 
-export const ObtenerSububicacion = async (idproducto) => {
-  try{
-    const response = await fetch(`${API_BASE_URL}/api/Inventario/ObtenerSububicacion/${idproducto}`);
+export const ObtenerSububicacion = async (idaperturainventario, idproducto) => {
+  try {
+    const url = `${API_BASE_URL}/api/Inventario/ObtenerSububicacion/${idaperturainventario}/${idproducto}`;
 
-    if (!response.ok){
-      return null
+    console.log('🔍 [ObtenerSububicacion] Consultando:', url);
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      return null;
     }
 
     const result = await response.json();
     return result;
   }
-  catch (error){
-    console.error("Ocurrio un error al obtener la sububicacion del producto: ", idproducto);
-    return null
-  }
-}
-
-export const ObtenerTodosProductosSucursalDrogueria = async () =>{
-  try{
-    const response = await fetch(`${API_BASE_URL}/api/Inventario/ObtenerTodosProductosSucursalDrogueria`);
-    
-    if (!response.ok){
-      console.error("[DROGUERIA] Ocurrio un error en la consulta.");
-      return null
-    }
-
-    const result = await response.json();
-    return result;
-  }
-  catch (error){
-    console.error("[DROGUERIA] Ocurrio un error al obtener los producto de la sucursal DROGUERIA.");
+  catch (error) {
+    console.error("Ocurrio un error al obtener la sububicacion del producto: ", idproducto, error);
     return null;
   }
-}
+};
+
+export const ObtenerTodosProductosSucursalDrogueria = async (idubicacion = null) => {
+  try {
+    let url = `${API_BASE_URL}/api/Inventario/ObtenerTodosProductosSucursalDrogueria`;
+    if (idubicacion !== null && idubicacion !== undefined) {
+      url += `?idubicacion=${encodeURIComponent(idubicacion)}`;
+    }
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      console.error("[DROGUERIA] Ocurrio un error en la consulta.");
+      return null;
+    }
+
+    const result = await response.json();
+    return result;
+  }
+  catch (error) {
+    console.error("[DROGUERIA] Ocurrio un error al obtener los producto de la sucursal DROGUERIA:", error);
+    return null;
+  }
+};

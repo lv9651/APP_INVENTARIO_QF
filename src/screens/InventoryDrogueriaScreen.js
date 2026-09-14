@@ -11,6 +11,7 @@ import {
   finalizarInventarioDrogueria,
   eliminarProductoInventariadoDrogueria,
   exportarReporteExcelDrogueria,
+  agruparItemsParaExcelDrogueria,
   ObtenerTodosProductosSucursalDrogueria,
   getInventarioEstado
 } from '../services/api';
@@ -27,12 +28,14 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
   
   // Estados para control de inventario
   const [tipoInventario, setTipoInventario] = useState('PARCIAL');
+  const [idUbicacion, setIdUbicacion] = useState(100); // 100: APROBADOS, 102: BAJAS, 248: DEVOLUCIONES
   const [inventarioEstado, setInventarioEstado] = useState('PENDIENTE');
   const [fechaInicioInventario, setFechaInicioInventario] = useState(null);
   const [fechaFinInventario, setFechaFinInventario] = useState(null);
   const [loadingAccion, setLoadingAccion] = useState(false);
   const [productosFaltantes, setProductosFaltantes] = useState([]);
   const [modalFaltantesVisible, setModalFaltantesVisible] = useState(false);
+  const [adminPanelExpanded, setAdminPanelExpanded] = useState(true);
   
   const user = route.params?.user;
   const inventarioActivo = route.params?.inventarioActivo;
@@ -63,6 +66,7 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
       setIdAperturaState(null);
       setInventarioEstado('PENDIENTE');
       setTipoInventario('PARCIAL');
+      setIdUbicacion(100);
       setFechaInicioInventario(null);
       setFechaFinInventario(null);
       setRawItems([]);
@@ -77,7 +81,7 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
         ...inv
       }));
       const idAp = inv.idaperturainventario || inv.id || route.params?.idaperturainventario || idAperturaState || null;
-      console.log("[InventoryDrogueriaScreen] IDAPERTURAINVENTARIO: ", idAp, "ESTADO:", inv.estado || inventarioEstado, "TIPO:", inv.tipo || tipoInventario);
+      console.log("[InventoryDrogueriaScreen] IDAPERTURAINVENTARIO: ", idAp, "ESTADO:", inv.estado || inventarioEstado, "TIPO:", inv.tipo || tipoInventario, "UBICACION:", inv.idubicacion || idUbicacion);
       if (idAp) {
         setIdAperturaState(idAp);
       }
@@ -92,6 +96,9 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
       if (inv.tipo) {
         setTipoInventario(inv.tipo);
       }
+      if (inv.idubicacion) {
+        setIdUbicacion(Number(inv.idubicacion));
+      }
       if (inv.fecha_inicio) {
         setFechaInicioInventario(inv.fecha_inicio);
       }
@@ -103,6 +110,7 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
     } else if (!idAperturaState) {
       setInventarioEstado('PENDIENTE');
       setTipoInventario('PARCIAL');
+      setIdUbicacion(100);
     }
   };
 
@@ -210,9 +218,22 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
     setTipoInventario(tipo);
   };
 
+  const handleCambiarUbicacion = (ubicacion) => {
+    if (inventarioEstado === 'INICIADO') {
+      Alert.alert('Inventario en curso', 'No se puede cambiar la ubicación porque el inventario ya fue iniciado.');
+      return;
+    }
+    setIdUbicacion(ubicacion);
+  };
+
   const handleIniciarInventario = async () => {
     if (!tipoInventario) {
-      Alert.alert('Error', 'Seleccione un tipo de inventario');
+      Alert.alert('Error', 'Seleccione un tipo de inventario (CICLICO o GENERAL)');
+      return;
+    }
+
+    if (!idUbicacion) {
+      Alert.alert('Error', 'Seleccione una ubicación (Aprobados, Bajas o Devoluciones)');
       return;
     }
 
@@ -229,6 +250,9 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
         if (invEnCurso) {
           setLoadingAccion(false);
           const tipoDesc = invEnCurso.tipo === 'TOTAL' ? 'GENERAL' : (invEnCurso.tipo || 'CICLICO');
+          if (invEnCurso.idubicacion) {
+            setIdUbicacion(Number(invEnCurso.idubicacion));
+          }
           Alert.alert(
             '⚠️ Inventario en progreso',
             `Ya existe un inventario en curso (${tipoDesc}) para Q. F. DROGUERIA.\n\nDebe finalizarse ese inventario antes de iniciar uno nuevo.`
@@ -242,9 +266,10 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
       setLoadingAccion(false);
     }
     
+    const descUbicacion = idUbicacion === 100 ? 'APROBADOS' : (idUbicacion === 102 ? 'BAJAS' : 'DEVOLUCIONES');
     Alert.alert(
       'Iniciar Inventario',
-      `¿Está seguro de INICIAR el inventario ${tipoInventario === 'TOTAL' ? 'GENERAL' : 'CICLICO'} en Q. F. DROGUERIA?\n\n` +
+      `¿Está seguro de INICIAR el inventario ${tipoInventario === 'TOTAL' ? 'GENERAL' : 'CICLICO'} - ${descUbicacion} en Q. F. DROGUERIA?\n\n` +
       `⚠️ Una vez iniciado, todos los usuarios podrán escanear productos.`,
       [
         { text: 'Cancelar', style: 'cancel' },
@@ -256,7 +281,8 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
               const result = await iniciarInventarioDrogueria(
                 tipoInventario, 
                 String(user?.id), 
-                String(user?.sucursalId || '66')
+                String(user?.sucursalId || '66'),
+                idUbicacion
               );
               if (result.success || result.Success === 1) {
                 setInventarioEstado('INICIADO');
@@ -267,11 +293,12 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
                     idaperturainventario: nuevoId,
                     estado: 'INICIADO',
                     tipo: tipoInventario,
+                    idubicacion: idUbicacion,
                     idsucursal_inventario: user?.sucursalId || 66
                   });
                 }
                 setFechaInicioInventario(new Date().toLocaleString());
-                Alert.alert('✅ Éxito', result.mensaje || result.message || `Inventario ${tipoInventario === 'TOTAL' ? 'GENERAL' : 'CICLICO'} iniciado correctamente`);
+                Alert.alert('✅ Éxito', result.mensaje || result.message || `Inventario ${tipoInventario === 'TOTAL' ? 'GENERAL' : 'CICLICO'} - ${descUbicacion} iniciado correctamente`);
                 loadProducts();
               } else {
                 Alert.alert('Error', result.message || 'No se pudo iniciar el inventario');
@@ -351,8 +378,11 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
       try {
         console.log('🔍 [DROGUERIA] Validando productos para inventario TOTAL...');
 
-        // 1. Obtener todos los productos con lotes en Droguería
-        const resSucursal = await ObtenerTodosProductosSucursalDrogueria();
+        // 1. Obtener todos los productos con lotes en Droguería para la ubicación seleccionada
+        const ubiParaValidacion = idUbicacion !== null && idUbicacion !== undefined
+          ? idUbicacion
+          : (inventarioActivoState?.idubicacion || null);
+        const resSucursal = await ObtenerTodosProductosSucursalDrogueria(ubiParaValidacion);
         const productosSucursal = Array.isArray(resSucursal) 
           ? resSucursal 
           : (resSucursal?.data && Array.isArray(resSucursal.data) ? resSucursal.data : []);
@@ -478,13 +508,8 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
       return;
     }
 
-    // Filtrar: si cantidad existencial es 0 y cantidad nueva también es 0, NO se incluye; caso contrario SÍ se incluye
-    const itemsParaReporte = rawItems.filter(item => {
-      const stockSistema = parseFloat(item.CantExistencial ?? item.cantExistencial ?? 0) || 0;
-      const stockFisico = parseFloat(item.Cant_nueva ?? item.cant_Nueva ?? item.cant_nueva ?? 0) || 0;
-      const ambosCero = Math.abs(stockSistema) < 0.0001 && Math.abs(stockFisico) < 0.0001;
-      return !ambosCero;
-    });
+    // Agrupar y filtrar lotes idénticos para el reporte Excel
+    const itemsParaReporte = agruparItemsParaExcelDrogueria(rawItems);
 
     if (itemsParaReporte.length === 0) {
       Alert.alert(
@@ -496,30 +521,28 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
 
     setIsExporting(true);
     try {
+      const ubiFinal = idUbicacion !== null && idUbicacion !== undefined 
+        ? Number(idUbicacion) 
+        : (inventarioActivoState?.idubicacion ? Number(inventarioActivoState.idubicacion) : null);
+
       const payload = {
         fechaInicioInventario: fechaInicioInventario,
         fechaFinInventario: fechaFinInventario,
         tipoInventario: tipoInventario || 'PARCIAL',
-        rows: itemsParaReporte.map((item, index) => {
-          const stockSistema = parseFloat(item.CantExistencial ?? item.cantExistencial ?? 0) || 0;
-          const stockFisico = parseFloat(item.Cant_nueva ?? item.cant_Nueva ?? item.cant_nueva ?? 0) || 0;
-          const precioc = parseFloat(item.precioc) || 0;
-          const diferencia = stockFisico - stockSistema;
-
-          return {
-            n: index + 1,
-            codigoBarras: item.CodigoBarra || item.codigobarra || item.codigoBarra || '',
-            descripcion: item.Descripcion || item.descripcion || '',
-            laboratorio: item.laboratorio || '',
-            numLote: item.NumLote || item.numLote || 'S/L',
-            fechaVencimiento: item.fechavalidez ? String(item.fechavalidez).split('T')[0] : '',
-            stockSistema: stockSistema,
-            stockFisico: stockFisico,
-            diferencia: diferencia,
-            valorizado: diferencia * precioc,
-            observaciones: ''
-          };
-        })
+        idubicacion: ubiFinal,
+        rows: itemsParaReporte.map((item, index) => ({
+          n: index + 1,
+          codigoBarras: item.codigoBarras,
+          descripcion: item.descripcion,
+          laboratorio: item.laboratorio,
+          numLote: item.numLote,
+          fechaVencimiento: item.fechaVencimiento,
+          stockSistema: item.stockSistema,
+          stockFisico: item.stockFisico,
+          diferencia: item.diferencia,
+          valorizado: item.valorizado,
+          observaciones: ''
+        }))
       };
 
       const result = await exportarReporteExcelDrogueria(payload);
@@ -559,6 +582,7 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
     const invActivoObj = inventarioActivoState || {
       idaperturainventario: idaperturainventario,
       tipo: tipoInventario,
+      idubicacion: idUbicacion,
       estado: inventarioEstado
     };
     return (
@@ -570,6 +594,7 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
         idaperturainventario={idaperturainventario} 
         inventarioActivo={invActivoObj}
         tipoInventario={tipoInventario}
+        idubicacion={idUbicacion}
         existingProducts={rawItems}
       />
     );
@@ -603,152 +628,277 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
 
   return (
     <View style={styles.container}>
-      {/* HEADER */}
+      {/* HEADER COMPACTO */}
       <View style={styles.header}>
-        <View>
+        <View style={styles.headerInfo}>
           <Text style={styles.userName}>👤 {user?.empleado || user?.name || user?.username || 'Usuario'}</Text>
-          <Text style={styles.userRole}>📛 Rol: {user?.role || 'Sin rol'}</Text>
-          <Text style={styles.sucursalLogueado}>🏢 Sucursal: {user?.sucursalNombre || 'Q. F. DROGUERIA'}</Text>
+          <Text style={styles.userRole}>
+            📛 {user?.role || 'Sin rol'}  •  🏢 {user?.sucursalNombre || 'Q. F. DROGUERIA'}
+          </Text>
         </View>
-        <TouchableOpacity onPress={handleSalir}>
+        <TouchableOpacity onPress={handleSalir} style={styles.logoutBtn}>
           <Text style={styles.logoutText}>🚪 Salir</Text>
         </TouchableOpacity>
       </View>
       
-      {/* PANEL DE CONTROL - SOLO PARA ADMINISTRADOR */}
-      {isAdmin && (
-        <View style={styles.adminPanel}>
-          <Text style={styles.adminTitle}>🎮 Panel de Control (Droguería)</Text>
-          
-          <View style={styles.estadoBadge}>
-            <Text style={[
-              styles.estadoBadgeText,
-              inventarioEstado === 'INICIADO' && styles.estadoBadgeVerde,
-              inventarioEstado === 'FINALIZADO' && styles.estadoBadgeRojo,
-              inventarioEstado === 'PENDIENTE' && styles.estadoBadgeAmarillo
-            ]}>
-              {inventarioEstado === 'INICIADO' ? '🟢 INICIADO' : 
-               inventarioEstado === 'FINALIZADO' ? '🔴 FINALIZADO' : '🟡 PENDIENTE'}
-            </Text>
-          </View>
-          
-          <View style={styles.tipoSelector}>
-            <Text style={styles.tipoLabel}>Tipo de inventario:</Text>
-            <View style={styles.tipoButtons}>
-              <TouchableOpacity 
-                style={[
-                  styles.tipoButton, 
-                  tipoInventario === 'PARCIAL' && styles.tipoButtonActive,
-                  inventarioEstado === 'INICIADO' && styles.tipoButtonDisabled
-                ]}
-                onPress={() => handleCambiarTipo('PARCIAL')}
-                disabled={inventarioEstado === 'INICIADO'}
-              >
-                <Text style={[styles.tipoButtonText, tipoInventario === 'PARCIAL' && styles.tipoButtonTextActive]}>
-                  📋 CICLICO
-                </Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={[
-                  styles.tipoButton, 
-                  tipoInventario === 'TOTAL' && styles.tipoButtonActive,
-                  inventarioEstado === 'INICIADO' && styles.tipoButtonDisabled
-                ]}
-                onPress={() => handleCambiarTipo('TOTAL')}
-                disabled={inventarioEstado === 'INICIADO'}
-              >
-                <Text style={[styles.tipoButtonText, tipoInventario === 'TOTAL' && styles.tipoButtonTextActive]}>
-                  📦 GENERAL
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-          
-          <View style={styles.adminButtons}>
-            {(inventarioEstado === 'PENDIENTE' || inventarioEstado === 'FINALIZADO') && (
-              <TouchableOpacity 
-                style={styles.iniciarButton} 
-                onPress={handleIniciarInventario}
-                disabled={loadingAccion}
-              >
-                <Text style={styles.adminButtonText}>
-                  {loadingAccion ? '⏳ Procesando...' : '🚀 INICIAR INVENTARIO'}
-                </Text>
-              </TouchableOpacity>
-            )}
-            
-            {inventarioEstado === 'INICIADO' && (
-              <TouchableOpacity 
-                style={styles.finalizarButton} 
-                onPress={handleFinalizarInventario}
-                disabled={loadingAccion}
-              >
-                <Text style={styles.adminButtonText}>
-                  {loadingAccion ? '⏳ Procesando...' : '🏁 FINALIZAR INVENTARIO'}
-                </Text>
-              </TouchableOpacity>
-            )}
-            
-            {inventarioEstado === 'FINALIZADO' && (
-              <View style={styles.finalizadoMensajeContainer}>
-                <Text style={styles.finalizadoMensajeTexto}>
-                  🔒 El inventario ya fue finalizado.
-                </Text>
-              </View>
-            )}
-          </View>
-        </View>
-      )}
-      
-      {/* Selector de vista - SOLO Administrador */}
-      {isAdmin && (
-        <View style={styles.viewSelector}>
-          <TouchableOpacity 
-            style={[styles.viewButton, viewMode === 'mis' && styles.activeButton]}
-            onPress={() => setViewMode('mis')}
-          >
-            <Text style={styles.viewButtonText}>📱 Mis Productos</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.viewButton, viewMode === 'todos' && styles.activeButton]}
-            onPress={() => setViewMode('todos')}
-          >
-            <Text style={styles.viewButtonText}>🌐 Todos los Productos</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-      
-      {/* Banner para operadores */}
-      {!isAdmin && (
-        <View style={styles.infoBanner}>
-          <Text style={styles.infoText}>📱 Mostrando solo tus productos de Droguería</Text>
-          {inventarioEstado !== 'INICIADO' && (
-            <Text style={styles.infoTextAdvertencia}>
-              {inventarioEstado === 'PENDIENTE' ? '⏳ Inventario no iniciado. Espere al administrador.' : '🔒 Inventario finalizado.'}
-            </Text>
-          )}
-        </View>
-      )}
-      
-      {/* Métricas */}
-      <View style={styles.statsRow}>
-        <View style={styles.statBox}>
-          <Text style={styles.statNumber}>{groupedItems.length}</Text>
-          <Text style={styles.statLabel}>Productos</Text>
-        </View>
-        <View style={styles.statBox}>
-          <Text style={styles.statNumber}>{totalUnits}</Text>
-          <Text style={styles.statLabel}>Unidades</Text>
-        </View>
-      </View>
-      
-      {/* Lista de Productos Agrupados */}
+      {/* Lista de Productos Agrupados con Header Scroleable */}
       <FlatList
         data={groupedItems}
         keyExtractor={(item) => item.key}
         contentContainerStyle={{ paddingBottom: 15 }}
         showsVerticalScrollIndicator={true}
+        keyboardShouldPersistTaps="handled"
+        ListHeaderComponent={
+          <>
+            {/* PANEL DE CONTROL - SOLO PARA ADMINISTRADOR */}
+            {isAdmin && (
+              <View style={styles.adminPanel}>
+                <TouchableOpacity 
+                  style={styles.adminHeaderTouchable}
+                  onPress={() => setAdminPanelExpanded(!adminPanelExpanded)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.adminTitleRow}>
+                    <Text style={styles.adminTitle}>🎮 Panel de Control (Droguería)</Text>
+                    <View style={styles.collapseToggleBadge}>
+                      <Text style={styles.collapseToggleText}>
+                        {adminPanelExpanded ? '▲ Ocultar' : '▼ Ver panel'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {!adminPanelExpanded && (
+                    <View style={styles.adminCompactSummary}>
+                      <Text style={[
+                        styles.compactBadgeText,
+                        inventarioEstado === 'INICIADO' && styles.compactBadgeVerde,
+                        inventarioEstado === 'FINALIZADO' && styles.compactBadgeRojo,
+                        inventarioEstado === 'PENDIENTE' && styles.compactBadgeAmarillo
+                      ]}>
+                        {inventarioEstado === 'INICIADO' ? '🟢 INICIADO' : 
+                         inventarioEstado === 'FINALIZADO' ? '🔴 FINALIZADO' : '🟡 PENDIENTE'}
+                      </Text>
+                      <Text style={styles.compactDivider}>•</Text>
+                      <Text style={styles.compactDetailText}>
+                        {tipoInventario === 'TOTAL' ? '📦 GENERAL' : '📋 CICLICO'}
+                      </Text>
+                      <Text style={styles.compactDivider}>•</Text>
+                      <Text style={styles.compactDetailText}>
+                        {idUbicacion === 100 ? 'APROBADOS' : (idUbicacion === 102 ? 'BAJAS' : 'DEVOLUCIONES')}
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+                
+                {adminPanelExpanded && (
+                  <>
+                    <View style={styles.estadoBadge}>
+                      <Text style={[
+                        styles.estadoBadgeText,
+                        inventarioEstado === 'INICIADO' && styles.estadoBadgeVerde,
+                        inventarioEstado === 'FINALIZADO' && styles.estadoBadgeRojo,
+                        inventarioEstado === 'PENDIENTE' && styles.estadoBadgeAmarillo
+                      ]}>
+                        {inventarioEstado === 'INICIADO' ? '🟢 INICIADO' : 
+                         inventarioEstado === 'FINALIZADO' ? '🔴 FINALIZADO' : '🟡 PENDIENTE'}
+                      </Text>
+                    </View>
+                    
+                    <View style={styles.tipoSelector}>
+                      <Text style={styles.tipoLabel}>Tipo de inventario:</Text>
+                      <View style={styles.tipoButtons}>
+                        <TouchableOpacity 
+                          style={[
+                            styles.tipoButton, 
+                            tipoInventario === 'PARCIAL' && styles.tipoButtonActive,
+                            inventarioEstado === 'INICIADO' && styles.tipoButtonDisabled
+                          ]}
+                          onPress={() => handleCambiarTipo('PARCIAL')}
+                          disabled={inventarioEstado === 'INICIADO'}
+                        >
+                          <Text style={[styles.tipoButtonText, tipoInventario === 'PARCIAL' && styles.tipoButtonTextActive]}>
+                            📋 CICLICO
+                          </Text>
+                        </TouchableOpacity>
+                        
+                        <TouchableOpacity 
+                          style={[
+                            styles.tipoButton, 
+                            tipoInventario === 'TOTAL' && styles.tipoButtonActive,
+                            inventarioEstado === 'INICIADO' && styles.tipoButtonDisabled
+                          ]}
+                          onPress={() => handleCambiarTipo('TOTAL')}
+                          disabled={inventarioEstado === 'INICIADO'}
+                        >
+                          <Text style={[styles.tipoButtonText, tipoInventario === 'TOTAL' && styles.tipoButtonTextActive]}>
+                            📦 GENERAL
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {/* Selector de Ubicación */}
+                    <View style={styles.ubicacionSelector}>
+                      <Text style={styles.ubicacionLabel}>Ubicación:</Text>
+                      <View style={styles.ubicacionButtons}>
+                        {/* APROBADOS (100) */}
+                        <TouchableOpacity 
+                          style={[
+                            styles.checkboxItem, 
+                            inventarioEstado === 'INICIADO' && styles.checkboxItemDisabled
+                          ]}
+                          onPress={() => handleCambiarUbicacion(100)}
+                          disabled={inventarioEstado === 'INICIADO'}
+                        >
+                          <View style={[
+                            styles.checkboxSquare, 
+                            idUbicacion === 100 && styles.checkboxSquareSelected,
+                            inventarioEstado === 'INICIADO' && styles.checkboxSquareDisabled
+                          ]}>
+                            {idUbicacion === 100 && <Text style={styles.checkmark}>✓</Text>}
+                          </View>
+                          <Text style={[
+                            styles.checkboxLabel, 
+                            idUbicacion === 100 && styles.checkboxLabelSelected,
+                            inventarioEstado === 'INICIADO' && styles.checkboxLabelDisabled
+                          ]}>
+                            APROBADOS
+                          </Text>
+                        </TouchableOpacity>
+
+                        {/* BAJAS (102) */}
+                        <TouchableOpacity 
+                          style={[
+                            styles.checkboxItem, 
+                            inventarioEstado === 'INICIADO' && styles.checkboxItemDisabled
+                          ]}
+                          onPress={() => handleCambiarUbicacion(102)}
+                          disabled={inventarioEstado === 'INICIADO'}
+                        >
+                          <View style={[
+                            styles.checkboxSquare, 
+                            idUbicacion === 102 && styles.checkboxSquareSelected,
+                            inventarioEstado === 'INICIADO' && styles.checkboxSquareDisabled
+                          ]}>
+                            {idUbicacion === 102 && <Text style={styles.checkmark}>✓</Text>}
+                          </View>
+                          <Text style={[
+                            styles.checkboxLabel, 
+                            idUbicacion === 102 && styles.checkboxLabelSelected,
+                            inventarioEstado === 'INICIADO' && styles.checkboxLabelDisabled
+                          ]}>
+                            BAJAS
+                          </Text>
+                        </TouchableOpacity>
+
+                        {/* DEVOLUCIONES (248) */}
+                        <TouchableOpacity 
+                          style={[
+                            styles.checkboxItem, 
+                            inventarioEstado === 'INICIADO' && styles.checkboxItemDisabled
+                          ]}
+                          onPress={() => handleCambiarUbicacion(248)}
+                          disabled={inventarioEstado === 'INICIADO'}
+                        >
+                          <View style={[
+                            styles.checkboxSquare, 
+                            idUbicacion === 248 && styles.checkboxSquareSelected,
+                            inventarioEstado === 'INICIADO' && styles.checkboxSquareDisabled
+                          ]}>
+                            {idUbicacion === 248 && <Text style={styles.checkmark}>✓</Text>}
+                          </View>
+                          <Text style={[
+                            styles.checkboxLabel, 
+                            idUbicacion === 248 && styles.checkboxLabelSelected,
+                            inventarioEstado === 'INICIADO' && styles.checkboxLabelDisabled
+                          ]}>
+                            DEVOLUCIONES
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                    
+                    <View style={styles.adminButtons}>
+                      {(inventarioEstado === 'PENDIENTE' || inventarioEstado === 'FINALIZADO') && (
+                        <TouchableOpacity 
+                          style={styles.iniciarButton} 
+                          onPress={handleIniciarInventario}
+                          disabled={loadingAccion}
+                        >
+                          <Text style={styles.adminButtonText}>
+                            {loadingAccion ? '⏳ Procesando...' : '🚀 INICIAR INVENTARIO'}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                      
+                      {inventarioEstado === 'INICIADO' && (
+                        <TouchableOpacity 
+                          style={styles.finalizarButton} 
+                          onPress={handleFinalizarInventario}
+                          disabled={loadingAccion}
+                        >
+                          <Text style={styles.adminButtonText}>
+                            {loadingAccion ? '⏳ Procesando...' : '🏁 FINALIZAR INVENTARIO'}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                      
+                      {inventarioEstado === 'FINALIZADO' && (
+                        <View style={styles.finalizadoMensajeContainer}>
+                          <Text style={styles.finalizadoMensajeTexto}>
+                            🔒 El inventario ya fue finalizado.
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </>
+                )}
+              </View>
+            )}
+            
+            {/* Selector de vista - SOLO Administrador */}
+            {isAdmin && (
+              <View style={styles.viewSelector}>
+                <TouchableOpacity 
+                  style={[styles.viewButton, viewMode === 'mis' && styles.activeButton]}
+                  onPress={() => setViewMode('mis')}
+                >
+                  <Text style={styles.viewButtonText}>📱 Mis Productos</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.viewButton, viewMode === 'todos' && styles.activeButton]}
+                  onPress={() => setViewMode('todos')}
+                >
+                  <Text style={styles.viewButtonText}>🌐 Todos los Productos</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            
+            {/* Banner para operadores */}
+            {!isAdmin && (
+              <View style={styles.infoBanner}>
+                <Text style={styles.infoText}>📱 Mostrando solo tus productos de Droguería</Text>
+                {inventarioEstado !== 'INICIADO' && (
+                  <Text style={styles.infoTextAdvertencia}>
+                    {inventarioEstado === 'PENDIENTE' ? '⏳ Inventario no iniciado. Espere al administrador.' : '🔒 Inventario finalizado.'}
+                  </Text>
+                )}
+              </View>
+            )}
+            
+            {/* Métricas */}
+            <View style={styles.statsRow}>
+              <View style={styles.statBox}>
+                <Text style={styles.statNumber}>{groupedItems.length}</Text>
+                <Text style={styles.statLabel}>Productos</Text>
+              </View>
+              <View style={styles.statBox}>
+                <Text style={styles.statNumber}>{totalUnits}</Text>
+                <Text style={styles.statLabel}>Unidades</Text>
+              </View>
+            </View>
+          </>
+        }
         renderItem={({ item }) => (
           <View style={styles.card}>
             <Text style={styles.barcode}>📷 {item.codigobarra}</Text>
@@ -768,7 +918,8 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
                       isNew: false,
                       user: user,
                       idaperturainventario: idaperturainventario,
-                      inventarioActivo: inventarioActivoState || { idaperturainventario }
+                      inventarioActivo: inventarioActivoState || { idaperturainventario, idubicacion: idUbicacion },
+                      idubicacion: idUbicacion
                     });
                   }}
                 >
@@ -877,15 +1028,26 @@ const styles = StyleSheet.create({
   header: { 
     flexDirection: 'row', 
     justifyContent: 'space-between', 
-    padding: 12, 
+    alignItems: 'center',
+    paddingHorizontal: 12, 
+    paddingVertical: 8, 
     backgroundColor: '#fff', 
     borderBottomWidth: 1, 
-    borderColor: '#ddd' 
+    borderColor: '#e2e8f0' 
   },
-  userName: { fontSize: 14, fontWeight: 'bold', color: '#2c3e50' },
-  userRole: { fontSize: 12, color: '#7f8c8d', marginTop: 2 },
-  sucursalLogueado: { fontSize: 12, color: '#27ae60', fontWeight: 'bold', marginTop: 2 },
-  logoutText: { color: '#e74c3c', fontWeight: 'bold', fontSize: 12 },
+  headerInfo: {
+    flex: 1,
+    marginRight: 8,
+  },
+  userName: { fontSize: 13, fontWeight: 'bold', color: '#2c3e50' },
+  userRole: { fontSize: 11, color: '#64748b', marginTop: 1 },
+  logoutBtn: {
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    backgroundColor: '#fee2e2',
+    borderRadius: 6,
+  },
+  logoutText: { color: '#dc2626', fontWeight: 'bold', fontSize: 12 },
   
   // Panel Admin
   adminPanel: {
@@ -895,12 +1057,70 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     elevation: 3,
   },
+  adminHeaderTouchable: {
+    paddingVertical: 2,
+  },
+  adminTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
   adminTitle: {
     color: '#fff',
     fontWeight: 'bold',
-    fontSize: 16,
-    marginBottom: 12,
-    textAlign: 'center',
+    fontSize: 15,
+  },
+  collapseToggleBadge: {
+    backgroundColor: '#1abc9c',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  collapseToggleText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  adminCompactSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    backgroundColor: '#34495e',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    marginTop: 4,
+  },
+  compactBadgeText: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  compactBadgeVerde: {
+    backgroundColor: '#27ae60',
+    color: '#fff',
+  },
+  compactBadgeRojo: {
+    backgroundColor: '#e74c3c',
+    color: '#fff',
+  },
+  compactBadgeAmarillo: {
+    backgroundColor: '#f39c12',
+    color: '#fff',
+  },
+  compactDivider: {
+    color: '#7f8c8d',
+    fontSize: 12,
+    marginHorizontal: 4,
+  },
+  compactDetailText: {
+    color: '#ecf0f1',
+    fontSize: 11,
+    fontWeight: 'bold',
   },
   estadoBadge: {
     alignItems: 'center',
@@ -962,6 +1182,67 @@ const styles = StyleSheet.create({
   },
   tipoButtonTextActive: {
     color: '#fff',
+  },
+  ubicacionSelector: {
+    backgroundColor: '#34495e',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  ubicacionLabel: {
+    color: '#fff',
+    fontSize: 12,
+    marginBottom: 8,
+    fontWeight: 'bold',
+  },
+  ubicacionButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  checkboxItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 2,
+  },
+  checkboxItemDisabled: {
+    opacity: 0.8,
+  },
+  checkboxSquare: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#bdc3c7',
+    backgroundColor: '#ecf0f1',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 6,
+  },
+  checkboxSquareSelected: {
+    backgroundColor: '#2ecc71',
+    borderColor: '#27ae60',
+  },
+  checkboxSquareDisabled: {
+    borderColor: '#95a5a6',
+  },
+  checkmark: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: 'bold',
+    lineHeight: 15,
+  },
+  checkboxLabel: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#bdc3c7',
+  },
+  checkboxLabelSelected: {
+    color: '#fff',
+  },
+  checkboxLabelDisabled: {
+    color: '#95a5a6',
   },
   adminButtons: {
     marginBottom: 0,

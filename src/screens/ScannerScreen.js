@@ -20,7 +20,8 @@ export default function ScannerScreen({
   idaperturainventario, 
   existingProducts = [],
   inventarioActivo: inventarioActivoParam,
-  tipoInventario 
+  tipoInventario,
+  idubicacion
 }) {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
@@ -152,12 +153,18 @@ export default function ScannerScreen({
       console.log(`📤 Scanner Droguería - Barcode: ${barcode} - Modo: ${yaExiste ? 'EDICIÓN' : 'NUEVO'}`);
       onClose();
 
+      const ubiFinal = idubicacion || inventarioActivoParam?.idubicacion || null;
       const invActivoCompleto = (inventarioActivoParam && typeof inventarioActivoParam === 'object') 
-        ? { ...inventarioActivoParam, tipo: inventarioActivoParam.tipo || tipoInventario || 'TOTAL' }
+        ? { 
+            ...inventarioActivoParam, 
+            tipo: inventarioActivoParam.tipo || tipoInventario || 'TOTAL',
+            idubicacion: ubiFinal
+          }
         : {
             idaperturainventario: idaperturainventario,
             tipo: tipoInventario || 'TOTAL',
-            estado: 'INICIADO'
+            estado: 'INICIADO',
+            idubicacion: ubiFinal
           };
 
       if (yaExiste) {
@@ -168,7 +175,8 @@ export default function ScannerScreen({
           user: user,
           fromScanner: false,
           idaperturainventario: idaperturainventario,
-          inventarioActivo: invActivoCompleto
+          inventarioActivo: invActivoCompleto,
+          idubicacion: ubiFinal
         });
       } else {
         // Redirigir en modo NUEVO ESCANEO (INSERT)
@@ -178,7 +186,8 @@ export default function ScannerScreen({
           user: user,
           fromScanner: true,
           idaperturainventario: idaperturainventario,
-          inventarioActivo: invActivoCompleto
+          inventarioActivo: invActivoCompleto,
+          idubicacion: ubiFinal
         });
       }
       return;
