@@ -1085,3 +1085,73 @@ export const ObtenerTodosProductosSucursalDrogueria = async (idubicacion = null)
     return null;
   }
 };
+
+
+
+export const obtenerLotesGeneral = async (codigoBarras, idsucursal) => {
+  try {
+    if (!codigoBarras) {
+      return {
+        success: false,
+        message: 'El código de barras (idproductolote) es obligatorio.',
+        data: []
+      };
+    }
+
+    if (!idsucursal || Number(idsucursal) <= 0) {
+      return {
+        success: false,
+        message: 'El id de sucursal debe ser mayor a 0.',
+        data: []
+      };
+    }
+
+    const cleanCode = encodeURIComponent(String(codigoBarras).trim());
+    const url = `${API_BASE_URL}/api/Inventario/obtener-lotes?codigoBarras=${cleanCode}&idsucursal=${encodeURIComponent(idsucursal)}`;
+
+    console.log('🔍 [LOTES GENERAL] Consultando:', url);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json'
+      }
+    });
+
+    const text = await response.text();
+
+    if (!text || text.trim() === '') {
+      console.warn('[LOTES GENERAL] Respuesta vacía del servidor.');
+      return { success: false, message: 'El servidor devolvió una respuesta vacía.', data: [] };
+    }
+
+    let result;
+    try {
+      result = JSON.parse(text);
+    } catch (parseError) {
+      console.error('[LOTES GENERAL] Error parseando JSON:', parseError, 'Texto:', text);
+      return {
+        success: false,
+        message: 'Respuesta inválida del servidor.',
+        data: []
+      };
+    }
+
+    console.log('[LOTES GENERAL] Lotes obtenidos:', result);
+
+    return {
+      success: result.success === true,
+      message: result.message || (result.success ? 'Lotes obtenidos correctamente.' : 'No se encontraron lotes.'),
+      total: result.total || (Array.isArray(result.data) ? result.data.length : 0),
+      data: Array.isArray(result.data) ? result.data : []
+    };
+
+  } catch (error) {
+    console.error('❌ [LOTES GENERAL] Error:', error);
+    return {
+      success: false,
+      message: error.message || 'Error al conectar con el servidor.',
+      data: []
+    };
+  }
+};

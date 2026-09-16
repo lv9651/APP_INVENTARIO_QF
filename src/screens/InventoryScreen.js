@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as XLSX from 'xlsx';
@@ -9,8 +8,7 @@ import {
   getTomaInventario, 
   iniciarInventario,
   finalizarInventario,
-  eliminarTomaInventario,
-  getInventarioEstado
+  eliminarTomaInventario  
 } from '../services/api';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -19,7 +17,6 @@ export default function InventoryScreen({ navigation, route }) {
   const [showScanner, setShowScanner] = useState(false);
   const [sessionId] = useState(`INV-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`);
   const [isLoading, setIsLoading] = useState(true);
-  const [viewMode, setViewMode] = useState('mis');
   
   // ESTADOS PARA CONTROL DE INVENTARIO
   const [tipoInventario, setTipoInventario] = useState('PARCIAL');
@@ -28,21 +25,26 @@ export default function InventoryScreen({ navigation, route }) {
   const [fechaFinInventario, setFechaFinInventario] = useState(null);
   const [loadingAccion, setLoadingAccion] = useState(false);
   
+  // Para expandir/colapsar lotes por producto
+  const [productosExpandidos, setProductosExpandidos] = useState({});
+  
   const user = route.params?.user;
-const inventarioActivo = route.params?.inventarioActivo;
-const sucursalInventario = inventarioActivo?.nombre_sucursal_inventario || '';
-const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
+  const inventarioActivo = route.params?.inventarioActivo;
+  const sucursalInventario = inventarioActivo?.nombre_sucursal_inventario || '';
+  const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
   const crearNuevo = route.params?.crearNuevo || false;
   
   // Verificar si es ADMINISTRADOR por el ROLE
   const isAdmin = user?.role === 'ADMINISTRADOR';
+  
+  // ✅ Si es admin, vista por defecto "todos". Si no, "mis".
+  const [viewMode, setViewMode] = useState(isAdmin ? 'todos' : 'mis');
 
   // ============================================
   // CARGAR ESTADO DEL INVENTARIO
   // ============================================
   const cargarEstadoInventario = () => {
     if (inventarioActivo) {
-      // Si venimos de SelectInventoryScreen con un inventario activo
       setInventarioEstado(inventarioActivo.estado || 'INICIADO');
       setTipoInventario(inventarioActivo.tipo || 'PARCIAL');
       if (inventarioActivo.fecha_inicio) {
@@ -52,7 +54,6 @@ const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
         setFechaFinInventario(inventarioActivo.fecha_fin);
       }
     } else if (crearNuevo) {
-      // Si venimos a crear un nuevo inventario
       setInventarioEstado('PENDIENTE');
       setTipoInventario('PARCIAL');
     }
@@ -71,80 +72,157 @@ const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
     }, [viewMode, user])
   );
 
+  // ==========================================
+  // CARGAR Y AGRUPAR PRODUCTOS POR CÓDIGO DE BARRAS
+  // ==========================================
   const loadProducts = async () => {
-  setIsLoading(true);
-  try {
-    let productos;
-    const esAdmin = user?.role === 'ADMINISTRADOR';
-    
-    const inventarioActivo = route.params?.inventarioActivo;
-    const idaperturainventario = inventarioActivo?.idaperturainventario || inventarioActivo?.id || null;
-    
-    console.log('📦 Cargando productos - Admin:', esAdmin);
-    console.log('📦 idaperturainventario:', idaperturainventario);
-    
-    if (viewMode === 'mis') {
-      productos = await getTomaInventario(user?.id);
-      console.log('Mis productos:', productos?.length || 0);
-    } else if (esAdmin) {
-      const todos = await getTomaInventario();
-      console.log('Todos los productos (sin filtrar):', todos?.length || 0);
+    setIsLoading(true);
+    try {
+      let productos;
+      const esAdmin = user?.role === 'ADMINISTRADOR';
       
-      // ✅ FILTRAR SOLO POR idaperturainventario
-      if (idaperturainventario) {
-        productos = todos.filter(prod => prod.idaperturainventario === idaperturainventario);
-        console.log('📦 Productos filtrados por idaperturainventario:', productos?.length || 0);
-      } else {
-        productos = todos;
-        console.log('📦 Mostrando TODOS los productos (sin filtro)');
+      const inventarioActivo = route.params?.inventarioActivo;
+      const idaperturainventario = inventarioActivo?.idaperturainventario || inventarioActivo?.id || null;
+      
+      console.log('📦 Cargando productos - Admin:', esAdmin);
+      console.log('📦 viewMode:', viewMode);
+      console.log('📦 idaperturainventario:', idaperturainventario);
+      
+      if (viewMode === 'mis') {
+        productos = await getTomaInventario(user?.id);
+        console.log('Mis productos:', productos?.length || 0);
+      } else if (esAdmin) {
+        const todos = await getTomaInventario();
+        console.log('Todos los productos (sin filtrar):', todos?.length || 0);
+        
+        // 🔍 DEBUG: ver idaperturainventario de cada registro
+        console.log('🔍 [DEBUG] idaperturainventario de cada registro:', 
+          todos?.map(t => ({
+            codigo: t.codigoBarra,
+            idApertura: t.idaperturainventario,
+            tipoDeDato: typeof t.idaperturainventario
+          }))
+        );
+        console.log('🔍 [DEBUG] idaperturainventario buscado:', 
+          idaperturainventario, 
+          'tipo:', 
+          typeof idaperturainventario
+        );
+        
+        // ✅ FILTRAR SOLO POR idaperturainventario (comparación flexible)
+        if (idaperturainventario) {
+          const filtrados = todos.filter(prod => 
+            String(prod.idaperturainventario) === String(idaperturainventario)
+          );
+          console.log('📦 Productos filtrados por idaperturainventario:', filtrados?.length || 0);
+          
+          // ✅ Fallback: si el filtro no devuelve nada, mostrar todos
+          if (filtrados.length === 0) {
+            console.log('⚠️ Filtro sin resultados → mostrando TODOS los productos');
+            productos = todos;
+          } else {
+            productos = filtrados;
+          }
+        } else {
+          productos = todos;
+          console.log('📦 Mostrando TODOS los productos (sin filtro)');
+        }
       }
-    }
-    
-    if (productos && productos.length > 0) {
-      const itemsList = productos.map(prod => ({
-        idTomaInventario: prod.idTomaInventario,
-        codigobarra: prod.codigoBarra,
-        name: prod.descripcion,
-        lote: prod.numLote || 'N/A',
-        cantidad_nueva: prod.cant_Nueva || 0,
-        usuario: prod.empleadoRegistro || prod.usuarioRegistro || 'Usuario',
-        fecha_edicion: prod.fechaActualizacion ? new Date(prod.fechaActualizacion).toLocaleString() : new Date().toLocaleString(),
-        nombresucursal: prod.nombresucursal,
-        sucursal_destino: prod.sucursal_destino || 'N/A',
-        ubicacion: prod.ubicacion || 'N/A',
-        idproducto: prod.idProducto || 0,
-        idaperturainventario: prod.idaperturainventario,
+
+      if (!productos || productos.length === 0) {
+        setItems([]);
+        return;
+      }
+
+      // ==========================================
+      // AGRUPAR POR CÓDIGO DE BARRAS
+      // ==========================================
+      const gruposMap = new Map();
+
+      productos.forEach(prod => {
+        const codigo = prod.codigoBarra || prod.codigobarra || '';
+        if (!codigo) return;
+
+        const cantNueva = parseFloat(prod.cant_Nueva) || 0;
+        const numLote = prod.numLote || 'N/A';
+        const ubicacion = prod.ubicacion || '-';
+
+        if (!gruposMap.has(codigo)) {
+          gruposMap.set(codigo, {
+            idTomaInventario: prod.idTomaInventario,
+            codigobarra: codigo,
+            name: prod.descripcion || '',
+            usuario: prod.empleadoRegistro || prod.usuarioRegistro || 'Usuario',
+            fecha_edicion: prod.fechaActualizacion
+              ? new Date(prod.fechaActualizacion).toLocaleString()
+              : new Date().toLocaleString(),
+            nombresucursal: prod.nombresucursal,
+            sucursal_destino: prod.sucursal_destino || 'N/A',
+            idproducto: prod.idProducto || 0,
+            idaperturainventario: prod.idaperturainventario,
+            cantidad_nueva: 0,
+            lotes: [],
+            ubicaciones: [],
+          });
+        }
+
+        const grupo = gruposMap.get(codigo);
+        grupo.cantidad_nueva += cantNueva;
+
+        // Agregar/actualizar lote
+        const loteExistente = grupo.lotes.find(l => l.numLote === numLote);
+        if (!loteExistente) {
+          grupo.lotes.push({
+            idTomaInventario: prod.idTomaInventario,
+            numLote: numLote,
+            cant_Nueva: cantNueva,
+            ubicacion: ubicacion,
+          });
+        } else {
+          loteExistente.cant_Nueva += cantNueva;
+        }
+
+        // Agregar ubicación única
+        if (ubicacion && ubicacion !== '-' && !grupo.ubicaciones.includes(ubicacion)) {
+          grupo.ubicaciones.push(ubicacion);
+        }
+      });
+
+      const itemsList = Array.from(gruposMap.values()).map(grupo => ({
+        ...grupo,
+        ubicacion: grupo.ubicaciones.length > 0 ? grupo.ubicaciones.join(', ') : '-',
+        lote: grupo.lotes.length === 1 ? grupo.lotes[0].numLote : `${grupo.lotes.length} lotes`,
       }));
+
+      console.log(`📦 ${itemsList.length} productos agrupados (de ${productos.length} registros)`);
       setItems(itemsList);
-    } else {
+
+    } catch (error) {
+      console.error('Error cargando productos:', error);
       setItems([]);
+    } finally {
+      setIsLoading(false);
     }
-  } catch (error) {
-    console.error('Error cargando productos:', error);
-  } finally {
-    setIsLoading(false);
-  }
-};
+  };
+
   // Actualizar la lista cuando se edita un producto
   useEffect(() => {
     if (route.params?.productoActualizado && route.params?.actualizarLista) {
-      const productoEditado = route.params.productoActualizado;
-      
-      setItems(prevItems => 
-        prevItems.map(item => 
-          item.codigobarra === productoEditado.codigobarra
-            ? { 
-                ...item, 
-                cantidad_nueva: productoEditado.cant_Nueva ,
-                ubicacion:productoEditado.ubicacion
-              }
-            : item
-        )
-      );
-      
+      // Recargar desde el servidor para reflejar todos los lotes
+      loadProducts();
       navigation.setParams({ productoActualizado: null, actualizarLista: false });
     }
   }, [route.params]);
+
+  // ============================================
+  // TOGGLE EXPANDIR/CONTRAER LOTES
+  // ============================================
+  const toggleExpandir = (codigo) => {
+    setProductosExpandidos(prev => ({
+      ...prev,
+      [codigo]: !prev[codigo]
+    }));
+  };
 
   // ============================================
   // FUNCIONES PARA ADMINISTRADOR
@@ -158,40 +236,10 @@ const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
     setTipoInventario(tipo);
   };
 
-  const handleIniciarInventario = async () => {
+  const handleIniciarInventario = () => {
     if (!tipoInventario) {
       Alert.alert('Error', 'Seleccione un tipo de inventario');
       return;
-    }
-
-    setLoadingAccion(true);
-    try {
-      const estadoRes = await getInventarioEstado();
-      if (estadoRes && estadoRes.success && Array.isArray(estadoRes.data)) {
-        const invEnCurso = estadoRes.data.find(inv => {
-          if (inv.estado !== 'INICIADO') return false;
-          const nomInv = (inv.nombre_sucursal_inventario || '').toLowerCase().trim();
-          const nomUser = (user?.sucursalNombre || '').toLowerCase().trim();
-          const coincideNom = nomInv === nomUser || nomInv.includes(nomUser) || nomUser.includes(nomInv);
-          const coincideId = inv.idsucursal_inventario && user?.sucursalId && String(inv.idsucursal_inventario) === String(user.sucursalId);
-          return coincideNom || coincideId;
-        });
-
-        if (invEnCurso) {
-          setLoadingAccion(false);
-          const tipoDesc = invEnCurso.tipo === 'TOTAL' ? 'TOTAL' : (invEnCurso.tipo || 'PARCIAL');
-          const sucNombre = invEnCurso.nombre_sucursal_inventario || user?.sucursalNombre || 'la sucursal';
-          Alert.alert(
-            '⚠️ Inventario en progreso',
-            `Ya existe un inventario en curso (${tipoDesc}) para ${sucNombre}.\n\nDebe finalizarse ese inventario antes de iniciar uno nuevo.`
-          );
-          return;
-        }
-      }
-    } catch (e) {
-      console.log('Error verificando inventario en curso en BD:', e);
-    } finally {
-      setLoadingAccion(false);
     }
     
     Alert.alert(
@@ -232,57 +280,56 @@ const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
     );
   };
 
- const handleFinalizarInventario = () => {
-  const totalUnits = items.reduce((sum, i) => sum + (i.cantidad_nueva || 0), 0);
-  
-  // ✅ OBTENER EL ID DEL INVENTARIO
-  const inventarioActivo = route.params?.inventarioActivo;
-  const idaperturainventario = inventarioActivo?.idaperturainventario || inventarioActivo?.id || null;
-  
-  if (!idaperturainventario) {
-    Alert.alert('Error', 'No se pudo identificar el inventario');
-    return;
-  }
-  
-  Alert.alert(
-    'Finalizar Inventario',
-    `¿Está seguro de FINALIZAR el inventario?\n\n📋 Tipo: ${tipoInventario === 'TOTAL' ? 'INVENTARIO TOTAL' : 'INVENTARIO PARCIAL'}\n📦 Productos registrados: ${items.length}\n📊 Unidades totales: ${totalUnits}\n\n⚠️ Después de finalizar, NO se podrán agregar más productos.`,
-    [
-      { text: 'Cancelar', style: 'cancel' },
-      { 
-        text: 'Finalizar', 
-        style: 'destructive',
-        onPress: async () => {
-          setLoadingAccion(true);
-          try {
-            console.log('🏁 Finalizando inventario ID:', idaperturainventario);
-            
-            const result = await finalizarInventario(
-              String(user?.id),
-              idaperturainventario  // ✅ SOLO EL ID
-            );
-            
-            if (result && result.success) {
-              setInventarioEstado('FINALIZADO');
-              setFechaFinInventario(new Date().toLocaleString());
-              Alert.alert('✅ Éxito', result.mensaje || 'Inventario finalizado correctamente');
-              navigation.replace('SelectInventory', { user: user });
-            } else {
-              Alert.alert('❌ Error', result?.mensaje || result?.message || 'No se pudo finalizar');
+  const handleFinalizarInventario = () => {
+    const totalUnits = items.reduce((sum, i) => sum + (i.cantidad_nueva || 0), 0);
+    
+    const inventarioActivo = route.params?.inventarioActivo;
+    const idaperturainventario = inventarioActivo?.idaperturainventario || inventarioActivo?.id || null;
+    
+    if (!idaperturainventario) {
+      Alert.alert('Error', 'No se pudo identificar el inventario');
+      return;
+    }
+    
+    Alert.alert(
+      'Finalizar Inventario',
+      `¿Está seguro de FINALIZAR el inventario?\n\n📋 Tipo: ${tipoInventario === 'TOTAL' ? 'INVENTARIO TOTAL' : 'INVENTARIO PARCIAL'}\n📦 Productos registrados: ${items.length}\n📊 Unidades totales: ${totalUnits}\n\n⚠️ Después de finalizar, NO se podrán agregar más productos.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { 
+          text: 'Finalizar', 
+          style: 'destructive',
+          onPress: async () => {
+            setLoadingAccion(true);
+            try {
+              console.log('🏁 Finalizando inventario ID:', idaperturainventario);
+              
+              const result = await finalizarInventario(
+                String(user?.id),
+                idaperturainventario
+              );
+              
+              if (result && result.success) {
+                setInventarioEstado('FINALIZADO');
+                setFechaFinInventario(new Date().toLocaleString());
+                Alert.alert('✅ Éxito', result.mensaje || 'Inventario finalizado correctamente');
+                navigation.replace('SelectInventory', { user: user });
+              } else {
+                Alert.alert('❌ Error', result?.mensaje || result?.message || 'No se pudo finalizar');
+              }
+            } catch (error) {
+              console.error('Error:', error);
+              Alert.alert('❌ Error', error?.message || 'Error al finalizar');
+            } finally {
+              setLoadingAccion(false);
             }
-          } catch (error) {
-            console.error('Error:', error);
-            Alert.alert('❌ Error', error?.message || 'Error al finalizar');
-          } finally {
-            setLoadingAccion(false);
           }
         }
-      }
-    ]
-  );
-};
+      ]
+    );
+  };
+
   const addItem = (product) => {
-    // VALIDAR si el inventario está INICIADO
     if (inventarioEstado !== 'INICIADO') {
       Alert.alert(
         '⛔ Inventario no activo',
@@ -318,47 +365,74 @@ const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
         sucursal_destino: product.sucursal_destino || user?.sucursalId || 'N/A',
         ubicacion: product.ubicacion || 'N/A',
         idproducto: product.idProducto || 0,
+        lotes: [{
+          idTomaInventario: product.idTomaInventario,
+          numLote: product.numLote || 'N/A',
+          cant_Nueva: product.cant_Nueva || 0,
+          ubicacion: product.ubicacion || '-'
+        }],
+        ubicaciones: product.ubicacion ? [product.ubicacion] : [],
       };
       setItems([...items, newItem]);
       Alert.alert('Éxito', 'Producto agregado');
     }
   };
   
+  // Eliminar TODOS los lotes del producto
   const deleteItem = async (item) => {
-  console.log('Estado del inventario:', inventarioEstado);
-  console.log('Item a eliminar:', item);
-  
-  Alert.alert(
-    'Eliminar producto',
-    `¿Desea eliminar ${item.name}?`,
-    [
-      { text: 'Cancelar', style: 'cancel' },
-      { 
-        text: 'Eliminar', 
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            console.log('Enviando a eliminar ID:', item.idTomaInventario);
-            const result = await eliminarTomaInventario(item.idTomaInventario);
-            console.log('Resultado:', result);
-            
-            if (result.success) {
-              const newItems = items.filter(i => i.idTomaInventario !== item.idTomaInventario);
-              setItems(newItems);
-              Alert.alert('✅ Éxito', result.message || 'Producto eliminado correctamente');
-            } else {
-              Alert.alert('❌ Error', result.message || 'No se pudo eliminar el producto');
+    const totalRegistros = item.lotes?.length || 1;
+    
+    Alert.alert(
+      'Eliminar producto',
+      `¿Desea eliminar "${item.name}"?\n\nSe eliminarán ${totalRegistros} registro(s) de lote.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { 
+          text: 'Eliminar', 
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              let exitoTotal = true;
+              const errores = [];
+              
+              if (item.lotes && item.lotes.length > 0) {
+                for (const lote of item.lotes) {
+                  if (lote.idTomaInventario) {
+                    const result = await eliminarTomaInventario(lote.idTomaInventario);
+                    if (!result.success) {
+                      exitoTotal = false;
+                      errores.push(`Lote ${lote.numLote}: ${result.message || 'Error'}`);
+                    }
+                  }
+                }
+              } else if (item.idTomaInventario) {
+                const result = await eliminarTomaInventario(item.idTomaInventario);
+                if (!result.success) {
+                  exitoTotal = false;
+                  errores.push(result.message || 'Error');
+                }
+              }
+
+              if (exitoTotal) {
+                await loadProducts();
+                Alert.alert('✅ Éxito', 'Producto(s) eliminado(s) correctamente');
+              } else {
+                Alert.alert('⚠️ Advertencia', 'Algunos registros no pudieron eliminarse:\n' + errores.join('\n'));
+                await loadProducts();
+              }
+            } catch (error) {
+              console.error('Error al eliminar:', error);
+              Alert.alert('❌ Error', 'Error al conectar con el servidor');
             }
-          } catch (error) {
-            console.error('Error al eliminar:', error);
-            Alert.alert('❌ Error', 'Error al conectar con el servidor');
           }
         }
-      }
-    ]
-  );
-};
+      ]
+    );
+  };
 
+  // ==========================================
+  // EXPORTAR A EXCEL: 1 fila por lote
+  // ==========================================
   const exportToExcel = async () => {
     if (items.length === 0) {
       Alert.alert('Error', 'No hay productos para exportar');
@@ -366,19 +440,43 @@ const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
     }
 
     try {
-      const data = items.map((item, index) => ({
-        '#': index + 1,
-        'idproducto': item.idproducto,
-        'Codigo_Barras': item.codigobarra,
-        'Producto': item.name,
-        'Lote': item.lote,
-        'Cantidad_Nueva': item.cantidad_nueva,
-        'Usuario': item.usuario,
-        'Fecha_Edicion': item.fecha_edicion,
-        'Tipo_Inventario': tipoInventario || 'N/A',
-        'sucursal_destino':item.sucursal_destino || 'N/A',
-        'ubicacion':item.ubicacion || 'N/A'
-      }));
+      // Expandir: una fila por lote
+      const data = [];
+      let contador = 1;
+
+      items.forEach(item => {
+        if (item.lotes && item.lotes.length > 0) {
+          item.lotes.forEach(lote => {
+            data.push({
+              '#': contador++,
+              'idproducto': item.idproducto,
+              'Codigo_Barras': item.codigobarra,
+              'Producto': item.name,
+              'Lote': lote.numLote,
+              'Cantidad_Nueva': lote.cant_Nueva,
+              'Usuario': item.usuario,
+              'Fecha_Edicion': item.fecha_edicion,
+              'Tipo_Inventario': tipoInventario || 'N/A',
+              'sucursal_destino': item.sucursal_destino || 'N/A',
+              'ubicacion': lote.ubicacion || 'N/A'
+            });
+          });
+        } else {
+          data.push({
+            '#': contador++,
+            'idproducto': item.idproducto,
+            'Codigo_Barras': item.codigobarra,
+            'Producto': item.name,
+            'Lote': item.lote,
+            'Cantidad_Nueva': item.cantidad_nueva,
+            'Usuario': item.usuario,
+            'Fecha_Edicion': item.fecha_edicion,
+            'Tipo_Inventario': tipoInventario || 'N/A',
+            'sucursal_destino': item.sucursal_destino || 'N/A',
+            'ubicacion': item.ubicacion || 'N/A'
+          });
+        }
+      });
 
       const ws = XLSX.utils.json_to_sheet(data);
       const wb = XLSX.utils.book_new();
@@ -418,36 +516,16 @@ const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
   }
 
   if (showScanner) {
-     console.log('📤 Enviando a Scanner - inventarioActivo:', inventarioActivo);
-  console.log('📤 Enviando a Scanner - idaperturainventario:', inventarioActivo?.id);
-    return <ScannerScreen onScan={addItem} onClose={() => setShowScanner(false)} navigation={navigation} user={user}     idaperturainventario={inventarioActivo?.idaperturainventario  || null} />;
-  }
-
-  const handleSalir = () => {
-    Alert.alert(
-      'Salir',
-      '¿Qué acción desea realizar?',
-      [
-        {
-          text: '📋 Menú Inventarios',
-          onPress: () => navigation.replace('SelectInventory', { user })
-        },
-        {
-          text: '🚪 Cerrar Sesión',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await AsyncStorage.removeItem('@auth_credentials');
-            } catch (e) {
-              console.error('Error cerrando sesión:', e);
-            }
-            navigation.replace('Login');
-          }
-        },
-        { text: 'Cancelar', style: 'cancel' }
-      ]
+    return (
+      <ScannerScreen 
+        onScan={addItem} 
+        onClose={() => setShowScanner(false)} 
+        navigation={navigation} 
+        user={user} 
+        idaperturainventario={inventarioActivo?.idaperturainventario || null} 
+      />
     );
-  };
+  }
 
   return (
     <View style={styles.container}>
@@ -460,7 +538,7 @@ const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
             <Text style={styles.sucursalLogueado}>🏢 Sucursal: {user.sucursalNombre}</Text>
           )}
         </View>
-        <TouchableOpacity onPress={handleSalir}>
+        <TouchableOpacity onPress={() => navigation.replace('Login')}>
           <Text style={styles.logoutText}>🚪 Salir</Text>
         </TouchableOpacity>
       </View>
@@ -470,7 +548,6 @@ const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
         <View style={styles.adminPanel}>
           <Text style={styles.adminTitle}>🎮 Panel de Control</Text>
           
-          {/* Estado actual del inventario */}
           <View style={styles.estadoBadge}>
             <Text style={[
               styles.estadoBadgeText,
@@ -483,7 +560,6 @@ const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
             </Text>
           </View>
           
-          {/* Selector de tipo de inventario */}
           <View style={styles.tipoSelector}>
             <Text style={styles.tipoLabel}>Tipo de inventario:</Text>
             <View style={styles.tipoButtons}>
@@ -517,7 +593,6 @@ const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
             </View>
           </View>
           
-          {/* Botones de acción */}
           <View style={styles.adminButtons}>
              {(inventarioEstado === 'PENDIENTE' || inventarioEstado === 'FINALIZADO') && (
               <TouchableOpacity 
@@ -598,44 +673,96 @@ const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
         </View>
       </View>
       
+      {/* LISTA AGRUPADA */}
       <FlatList
         data={items}
-        keyExtractor={(item, index) => `${item.codigobarra}-${index}`}
+        keyExtractor={(item) => item.codigobarra}
         contentContainerStyle={{ paddingBottom: 15 }}
         showsVerticalScrollIndicator={true}
-        renderItem={({ item }) => (
-          <View style={styles.card}>
-            <Text style={styles.barcode}>📷 {item.codigobarra}</Text>
-            <Text style={styles.productName}>📝 {item.name?.substring(0, 50)}</Text>
-            <Text style={styles.lote}>🔢 Lote: {item.lote}</Text>
-            <Text style={styles.usuario}>👤 Usuario: {item.usuario}</Text>
-            <Text style={styles.quantityNew}>✨ Cantidad: {item.cantidad_nueva}</Text>
-            <View style={styles.row}>
-              <View style={styles.actionButtons}>
-                <TouchableOpacity 
-                  style={styles.editProductButton}
-                  onPress={() => {
-                    navigation.navigate('EditProduct', { 
-                      barcode: item.codigobarra,
-                      ubicacion:item.ubicacion ,
-                      isNew: false,
-                      user: user
-                    });
-                  }}
-                >
-                  <Text style={styles.editText}>✏️ Editar</Text>
-                </TouchableOpacity>
-                
-                <TouchableOpacity 
-                  style={styles.deleteButton}
-                  onPress={() => deleteItem(item)}
-                >
-                  <Text style={styles.deleteText}>🗑️ Eliminar</Text>
-                </TouchableOpacity>
+        renderItem={({ item }) => {
+          const totalLotes = item.lotes?.length || 0;
+          const mostrarTodos = productosExpandidos[item.codigobarra] === true;
+          const lotesAMostrar = mostrarTodos || totalLotes <= 3
+            ? item.lotes
+            : item.lotes.slice(0, 3);
+
+          return (
+            <View style={styles.card}>
+              <Text style={styles.barcode}>📷 {item.codigobarra}</Text>
+              <Text style={styles.productName}>📝 {item.name?.substring(0, 50)}</Text>
+              
+              {/* Lotes anidados */}
+              {item.lotes && item.lotes.length > 0 ? (
+                <View style={styles.lotesContainer}>
+                  <Text style={styles.lotesTitle}>
+                    📦 {totalLotes} lote{totalLotes > 1 ? 's' : ''}:
+                  </Text>
+                  
+                  {lotesAMostrar.map((lote, idx) => (
+                    <View 
+                      key={`${item.codigobarra}-${lote.numLote}-${idx}`} 
+                      style={styles.loteRow}
+                    >
+                      <Text style={styles.loteRowText} numberOfLines={1}>
+                        🔢 {lote.numLote}
+                      </Text>
+                      <Text style={styles.loteRowCant}>
+                        ✨ {lote.cant_Nueva}
+                      </Text>
+                      <Text style={styles.loteRowUbic} numberOfLines={1}>
+                        📍 {lote.ubicacion || '-'}
+                      </Text>
+                    </View>
+                  ))}
+
+                  {totalLotes > 3 && (
+                    <TouchableOpacity 
+                      style={styles.verMasButton}
+                      onPress={() => toggleExpandir(item.codigobarra)}
+                    >
+                      <Text style={styles.verMasText}>
+                        {mostrarTodos 
+                          ? '▲ Ver menos' 
+                          : `▼ Ver ${totalLotes - 3} lote(s) más`}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ) : (
+                <Text style={styles.lote}>🔢 Lote: {item.lote}</Text>
+              )}
+
+              <Text style={styles.usuario}>👤 Usuario: {item.usuario}</Text>
+              <Text style={styles.quantityNew}>✨ Cantidad total: {item.cantidad_nueva}</Text>
+              
+              <View style={styles.row}>
+                <View style={styles.actionButtons}>
+                  <TouchableOpacity 
+                    style={styles.editProductButton}
+                    onPress={() => {
+                      navigation.navigate('EditProduct', { 
+                        barcode: item.codigobarra,
+                        ubicacion: item.ubicaciones?.[0] || '',
+                        isNew: false,
+                        user: user,
+                        idaperturainventario: item.idaperturainventario,
+                      });
+                    }}
+                  >
+                    <Text style={styles.editText}>✏️ Editar</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity 
+                    style={styles.deleteButton}
+                    onPress={() => deleteItem(item)}
+                  >
+                    <Text style={styles.deleteText}>🗑️ Eliminar</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
-          </View>
-        )}
+          );
+        }}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyTitle}>📭 Sin productos</Text>
@@ -683,7 +810,6 @@ const styles = StyleSheet.create({
   sucursalLogueado: { fontSize: 12, color: '#3498db', marginTop: 2 },
   logoutText: { color: '#e74c3c', fontWeight: 'bold', fontSize: 12 },
   
-  // Estilos para Panel de Admin
   adminPanel: {
     backgroundColor: '#2c3e50',
     margin: 10,
@@ -842,8 +968,8 @@ const styles = StyleSheet.create({
     marginBottom: 5 
   },
   statBox: { flex: 1, alignItems: 'center' },
-  statNumber: { fontSize: 10, fontWeight: 'bold', color: '#3498db' },
-  statLabel: { fontSize: 6, color: '#7f8c8d', marginTop: 3 },
+  statNumber: { fontSize: 14, fontWeight: 'bold', color: '#3498db' },
+  statLabel: { fontSize: 10, color: '#7f8c8d', marginTop: 3 },
   card: { 
     backgroundColor: '#fff', 
     margin: 8, 
@@ -854,8 +980,61 @@ const styles = StyleSheet.create({
   barcode: { fontWeight: 'bold', fontSize: 13, color: '#2c3e50' },
   productName: { fontSize: 12, color: '#34495e', marginTop: 2 },
   lote: { fontSize: 10, color: '#7f8c8d', marginTop: 2 },
-  usuario: { fontSize: 10, color: '#8e44ad', marginTop: 2 },
-  quantityNew: { fontSize: 12, color: '#27ae60', fontWeight: 'bold', marginTop: 2 },
+  usuario: { fontSize: 10, color: '#8e44ad', marginTop: 4 },
+  quantityNew: { fontSize: 13, color: '#27ae60', fontWeight: 'bold', marginTop: 4 },
+
+  // Lotes anidados
+  lotesContainer: {
+    marginTop: 6,
+    backgroundColor: '#f8fafc',
+    borderRadius: 6,
+    padding: 6,
+    borderLeftWidth: 3,
+    borderLeftColor: '#3498db',
+  },
+  lotesTitle: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+    marginBottom: 4,
+  },
+  loteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 3,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  loteRowText: {
+    flex: 1.2,
+    fontSize: 10,
+    color: '#334155',
+    fontWeight: '600',
+  },
+  loteRowCant: {
+    flex: 0.8,
+    fontSize: 10,
+    color: '#27ae60',
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  loteRowUbic: {
+    flex: 1,
+    fontSize: 10,
+    color: '#3498db',
+    textAlign: 'right',
+  },
+  verMasButton: {
+    marginTop: 4,
+    paddingVertical: 4,
+    alignItems: 'center',
+  },
+  verMasText: {
+    fontSize: 10,
+    color: '#3498db',
+    fontWeight: 'bold',
+  },
+
   row: { 
     flexDirection: 'row', 
     justifyContent: 'flex-end', 
