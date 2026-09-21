@@ -992,23 +992,9 @@ export const exportarExcelDrogueriaPorApertura = async (inventario) => {
   }
 };
 
-export const GuardarEditarSububicacion = async (arg1, arg2, arg3) => {
+export const GuardarEditarSububicacion = async (idproducto, sububicaciones) => {
   try {
-    let idaperturainventario, idproducto, sububicaciones;
-    if (typeof arg2 === 'string' && arg3 !== undefined) {
-      // Formato alternativo: (idproducto, sububicaciones, idaperturainventario)
-      idproducto = arg1;
-      sububicaciones = arg2;
-      idaperturainventario = arg3;
-    } else {
-      // Formato principal: (idaperturainventario, idproducto, sububicaciones)
-      idaperturainventario = arg1;
-      idproducto = arg2;
-      sububicaciones = arg3;
-    }
-
     const payload = {
-      idaperturainventario: idaperturainventario !== null && idaperturainventario !== undefined ? Number(idaperturainventario) : null,
       idproducto: idproducto !== null && idproducto !== undefined ? Number(idproducto) : null,
       sububicaciones: sububicaciones || ''
     };
@@ -1044,9 +1030,9 @@ export const GuardarEditarSububicacion = async (arg1, arg2, arg3) => {
   }
 };
 
-export const ObtenerSububicacion = async (idaperturainventario, idproducto) => {
+export const ObtenerSububicacion = async (idproducto) => {
   try {
-    const url = `${API_BASE_URL}/api/Inventario/ObtenerSububicacion/${idaperturainventario}/${idproducto}`;
+    const url = `${API_BASE_URL}/api/Inventario/ObtenerSububicacion/${idproducto}`;
 
     console.log('🔍 [ObtenerSububicacion] Consultando:', url);
     const response = await fetch(url);

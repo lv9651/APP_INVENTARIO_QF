@@ -249,8 +249,32 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
 
         setLotes(lotesAgrupados);
         setLotesOriginales([]);
-        setSububicacion('');
-        setSububicacionOriginal('');
+
+        // Obtener sububicación existente para el producto (escaneo / nuevo)
+        if (idProd) {
+          try {
+            console.log('🔍 [Escaneo/Nuevo] Consultando sububicación para idproducto:', idProd);
+            const subRes = await ObtenerSububicacion(idProd);
+            console.log('📍 [Escaneo/Nuevo] Sububicación obtenida:', subRes);
+            if (subRes !== null && subRes !== undefined) {
+              const subTexto = typeof subRes === 'string'
+                ? subRes
+                : (subRes?.descripcion || subRes?.Descripcion || subRes?.sububicaciones || subRes?.sububicacion || '');
+              setSububicacion(String(subTexto || ''));
+              setSububicacionOriginal(String(subTexto || ''));
+            } else {
+              setSububicacion('');
+              setSububicacionOriginal('');
+            }
+          } catch (errSub) {
+            console.error('❌ Error al obtener sububicación en escaneo/nuevo:', errSub);
+            setSububicacion('');
+            setSububicacionOriginal('');
+          }
+        } else {
+          setSububicacion('');
+          setSububicacionOriginal('');
+        }
       } else {
         // ==========================================
         // CASO 2: EDITAR PRODUCTO YA INVENTARIADO
@@ -287,10 +311,12 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
         // Obtener sububicación existente para el producto en edición
         if (idProd) {
           try {
-            console.log('🔍 Consultando sububicación para idapertura:', idAperturaFinal, 'idproducto:', idProd);
-            const subRes = await ObtenerSububicacion(idAperturaFinal, idProd);
+            console.log('🔍 Consultando sububicación para idproducto:', idProd);
+            const subRes = await ObtenerSububicacion(idProd);
             console.log('📍 Sububicación obtenida:', subRes);
-            const subTexto = subRes?.descripcion || subRes?.Descripcion || '';
+            const subTexto = typeof subRes === 'string'
+              ? subRes
+              : (subRes?.descripcion || subRes?.Descripcion || subRes?.sububicaciones || subRes?.sububicacion || '');
             setSububicacion(String(subTexto || ''));
             setSububicacionOriginal(String(subTexto || ''));
           } catch (errSub) {
@@ -450,9 +476,8 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
         // Si el usuario ingresó texto en sububicación, se guarda con GuardarEditarSububicacion
         if (productInfo.idproducto && sububicacion.trim() !== '') {
           try {
-            console.log('📍 Guardando sububicación para nuevo producto:', idAperturaFinal, productInfo.idproducto, sububicacion.trim());
+            console.log('📍 Guardando sububicación para nuevo producto:', productInfo.idproducto, sububicacion.trim());
             const subRes = await GuardarEditarSububicacion(
-              idAperturaFinal,
               Number(productInfo.idproducto),
               sububicacion.trim()
             );
@@ -512,9 +537,8 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
         // 1. Si cambió la sububicación, actualizarla
         if (sububicacionCambio && productInfo.idproducto) {
           try {
-            console.log('📍 Actualizando sububicación en edición:', idAperturaFinal, productInfo.idproducto, sububicacion.trim());
+            console.log('📍 Actualizando sububicación en edición:', productInfo.idproducto, sububicacion.trim());
             const subRes = await GuardarEditarSububicacion(
-              idAperturaFinal,
               Number(productInfo.idproducto),
               sububicacion.trim()
             );

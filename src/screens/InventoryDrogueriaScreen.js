@@ -315,7 +315,50 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
     );
   };
 
-  const mostrarAvisoProductosFaltantes = (faltantes) => {
+  const ejecutarFinalizacion = async (idaperturainventario) => {
+    if (!idaperturainventario) {
+      Alert.alert('Error', 'No se pudo identificar el inventario activo');
+      return;
+    }
+
+    setLoadingAccion(true);
+    try {
+      const result = await finalizarInventarioDrogueria(String(user?.id), idaperturainventario);
+      if (result && result.success) {
+        setInventarioEstado('FINALIZADO');
+        setFechaFinInventario(new Date().toLocaleString());
+        Alert.alert('✅ Éxito', result.mensaje || 'Inventario finalizado correctamente');
+        navigation.replace('SelectInventory', { user: user });
+      } else {
+        Alert.alert('❌ Error', result?.mensaje || result?.message || 'No se pudo finalizar');
+      }
+    } catch (error) {
+      console.error('Error al finalizar inventario:', error);
+      Alert.alert('❌ Error', error?.message || 'Error al finalizar');
+    } finally {
+      setLoadingAccion(false);
+    }
+  };
+
+  const confirmarFinalizacionForzada = (cantidadFaltantes, idApertura) => {
+    Alert.alert(
+      '🚨 ALERTA MÁXIMA - RIESGO DE STOCK',
+      `⚠️ SI FINALIZA EL INVENTARIO AHORA, EL STOCK DE TODOS LOS LOTES DE LOS PRODUCTOS FALTANTES SE REDUCIRÁ A 0.\n\n` +
+      `Se detectaron ${cantidadFaltantes} producto(s) no escaneados.\n\n` +
+      `Esta acción es IRREVERSIBLE y afectará existencias en el sistema.\n\n` +
+      `¿Está absolutamente seguro de finalizar de todas maneras?`,
+      [
+        { text: 'Cancelar / Seguir Escaneando', style: 'cancel' },
+        { 
+          text: 'Sí, finalizar y reducir a 0', 
+          style: 'destructive', 
+          onPress: () => ejecutarFinalizacion(idApertura) 
+        }
+      ]
+    );
+  };
+
+  const mostrarAvisoProductosFaltantes = (faltantes, idApertura) => {
     const total = faltantes.length;
     const maxItemsEnAlerta = 8;
     const itemsPreview = faltantes.slice(0, maxItemsEnAlerta);
@@ -330,17 +373,31 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
       mensaje += `\n\n... y ${total - maxItemsEnAlerta} producto(s) más pendientes.`;
     }
 
+    const idAperturaFinal = idApertura || idAperturaState || inventarioActivoState?.idaperturainventario || inventarioActivoState?.id;
+
+    const botones = [
+      { text: 'Cancelar', style: 'cancel' }
+    ];
+
+    if (total > maxItemsEnAlerta) {
+      botones.push({ 
+        text: '📋 Ver Lista', 
+        onPress: () => setModalFaltantesVisible(true) 
+      });
+    }
+
+    botones.push({
+      text: 'Finalizar de todas maneras',
+      style: 'destructive',
+      onPress: () => confirmarFinalizacionForzada(total, idAperturaFinal)
+    });
+
     Alert.alert(
       '⚠️ Productos Faltantes por Escanear',
       `Faltan escanear ${total} producto(s) con lotes en Droguería.\n\n` +
       `En el inventario GENERAL deben escanearse todos los productos antes de cerrar:\n\n` +
       mensaje,
-      total > maxItemsEnAlerta 
-        ? [
-            { text: 'Entendido', style: 'cancel' },
-            { text: '📋 Ver Lista Completa', onPress: () => setModalFaltantesVisible(true) }
-          ]
-        : [{ text: 'Entendido', style: 'default' }]
+      botones
     );
   };
 
@@ -419,7 +476,7 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
           if (faltantes.length > 0) {
             setLoadingAccion(false);
             setProductosFaltantes(faltantes);
-            mostrarAvisoProductosFaltantes(faltantes);
+            mostrarAvisoProductosFaltantes(faltantes, idaperturainventario);
             return;
           }
         }
@@ -445,25 +502,7 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
         { 
           text: 'Finalizar', 
           style: 'destructive',
-          onPress: async () => {
-            setLoadingAccion(true);
-            try {
-              const result = await finalizarInventarioDrogueria(String(user?.id), idaperturainventario);
-              if (result && result.success) {
-                setInventarioEstado('FINALIZADO');
-                setFechaFinInventario(new Date().toLocaleString());
-                Alert.alert('✅ Éxito', result.mensaje || 'Inventario finalizado correctamente');
-                navigation.replace('SelectInventory', { user: user });
-              } else {
-                Alert.alert('❌ Error', result?.mensaje || result?.message || 'No se pudo finalizar');
-              }
-            } catch (error) {
-              console.error('Error:', error);
-              Alert.alert('❌ Error', error?.message || 'Error al finalizar');
-            } finally {
-              setLoadingAccion(false);
-            }
-          }
+          onPress: () => ejecutarFinalizacion(idaperturainventario)
         }
       ]
     );
@@ -999,12 +1038,25 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
               style={styles.modalList}
             />
 
-            <TouchableOpacity 
-              style={styles.modalCloseButton} 
-              onPress={() => setModalFaltantesVisible(false)}
-            >
-              <Text style={styles.modalCloseButtonText}>Entendido / Cerrar</Text>
-            </TouchableOpacity>
+            <View style={styles.modalButtonsRow}>
+              <TouchableOpacity 
+                style={[styles.modalCloseButton, styles.modalSecondaryButton]} 
+                onPress={() => setModalFaltantesVisible(false)}
+              >
+                <Text style={styles.modalCloseButtonText}>Cerrar</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={[styles.modalCloseButton, styles.modalDangerButton]} 
+                onPress={() => {
+                  setModalFaltantesVisible(false);
+                  const idApertura = idAperturaState || inventarioActivoState?.idaperturainventario || inventarioActivoState?.id || route.params?.inventarioActivo?.idaperturainventario || route.params?.idaperturainventario;
+                  confirmarFinalizacionForzada(productosFaltantes.length, idApertura);
+                }}
+              >
+                <Text style={styles.modalCloseButtonText}>Finalizar de todas maneras</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1460,5 +1512,18 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: 'bold',
+  },
+  modalButtonsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  modalSecondaryButton: {
+    flex: 1,
+    backgroundColor: '#64748b',
+  },
+  modalDangerButton: {
+    flex: 1.4,
+    backgroundColor: '#dc2626',
   },
 });
