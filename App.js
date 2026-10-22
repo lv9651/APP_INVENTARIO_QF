@@ -15,7 +15,13 @@ export default function App() {
       <Stack.Navigator initialRouteName="Login">
         <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
         <Stack.Screen name="SelectInventory" component={SelectInventoryScreen} options={{ title: '📋 Inventario Activo' }} />
-        <Stack.Screen name="Inventory" component={InventoryScreen} options={{ title: 'Inventario ORVIT' }} />
+     <Stack.Screen 
+  name="Inventory" 
+  component={InventoryScreen} 
+  options={({ route }) => ({ 
+    title: `Inventario ${route.params?.user?.sucursalNombre || ''}`.trim() 
+  })} 
+/>
         <Stack.Screen name="EditProduct" component={EditProductScreen} options={{ title: '✏️ Editar Producto' }} />
         <Stack.Screen name="InventoryDrogueria" component={InventoryDrogueriaScreen} options={{ title: 'Inventario Droguería' }} />
         <Stack.Screen name="EditProductDrogueria" component={EditProductDrogueriaScreen} options={{ title: '✏️ Editar Producto Droguería' }} />

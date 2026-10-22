@@ -2,7 +2,8 @@ import { createWebModule } from "expo-modules-core";
 import * as FileSystem from 'expo-file-system';
 
 const API_BASE_URL = 'http://apiqfventas.qf.com.pe';
-//const API_BASE_URL = 'http://apiws.qf.com.pe';
+//const API_BASE_URL = 'http://apiws.qf.com.pe';e
+//const API_BASE_URL = 'http://apiqfventas.qf.com.pe';
 
 export const login = async (username, password) => {
   try {
@@ -52,6 +53,70 @@ export const login = async (username, password) => {
     };
   }
 };
+
+export const listarAlmacenes = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/Inventario/ListarAlmacenes`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    console.log('Almacenes obtenidos:', result);
+    
+    // Ajusta el retorno según la estructura de tu API
+    if (result.success && result.data) {
+      return result.data;
+    }
+    if (result.data) {
+      return result.data;
+    }
+    if (Array.isArray(result)) {
+      return result;
+    }
+    
+    return [];
+  } catch (error) {
+    console.error('Error al listar almacenes:', error);
+    return [];
+  }
+};
+
+export const obtenerInfoUsuario = async (filtro) => {
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/Principal/ObtenerInformacionUsuario?filtro=${encodeURIComponent(filtro)}`
+    );
+
+    const text = await response.text();
+
+    if (!text || text.trim() === '') {
+      console.warn('Respuesta vacía de ObtenerInformacionUsuario para:', filtro);
+      return null;
+    }
+
+    try {
+      const result = JSON.parse(text);
+      // Ajusta según cómo devuelva tu backend:
+      // - Si devuelve { success: true, data: {...} } → result.data
+      // - Si devuelve directamente el objeto → result
+      // - Si devuelve un array → result[0]
+      if (Array.isArray(result)) return result[0];
+      return result.data || result;
+    } catch (parseError) {
+      console.error('Respuesta no es JSON:', text.substring(0, 200));
+      return null;
+    }
+  } catch (error) {
+    console.error('Error obteniendo info del usuario:', error);
+    return null;
+  }
+};
+
+
+
+
 export const updateProduct = async (productData) => {
   try {
     const response = await fetch(`${API_BASE_URL}/actualizar`, {
@@ -247,7 +312,7 @@ export const getInventarioEstado = async () => {
 };
 
 // Iniciar inventario (solo ADMIN)
-export const iniciarInventario = async (tipo, usuario,idsucursal) => {
+export const iniciarInventario = async (tipo, usuario, idsucursal, idtipoalmacen = null) => {
   try {
     const response = await fetch(`${API_BASE_URL}/api/Etiqueta/iniciar-inventario`, {
       method: 'POST',
@@ -257,7 +322,10 @@ export const iniciarInventario = async (tipo, usuario,idsucursal) => {
       body: JSON.stringify({
         tipo: tipo,
         usuario: usuario,
-     idsucursal: String(idsucursal || '')
+        idsucursal: String(idsucursal || ''),
+        idtipoalmacen: idtipoalmacen !== null && idtipoalmacen !== undefined 
+          ? Number(idtipoalmacen) 
+          : null
       })
     });
     
@@ -1050,6 +1118,39 @@ export const ObtenerSububicacion = async (idproducto) => {
   }
 };
 
+
+
+
+
+
+
+
+
+
+
+export const obtenerHistoricoTomaInventario = async (idApertura) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/Etiqueta/historico/${idApertura}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error('No se encontró historial para esta apertura');
+    }
+
+    const result = await response.json();
+    return result; // Retorna el array de productos
+  } catch (error) {
+    console.error('Error obteniendo histórico:', error);
+    return null;
+  }
+};
+
+
+
 export const ObtenerTodosProductosSucursalDrogueria = async (idubicacion = null) => {
   try {
     let url = `${API_BASE_URL}/api/Inventario/ObtenerTodosProductosSucursalDrogueria`;
@@ -1072,42 +1173,28 @@ export const ObtenerTodosProductosSucursalDrogueria = async (idubicacion = null)
   }
 };
 
-
-
-export const obtenerLotesGeneral = async (codigoBarras, idsucursal) => {
+export const obtenerLotesGeneral = async (codigoBarras, idsucursal, idtipoalmacen = null) => {
   try {
     if (!codigoBarras) {
-      return {
-        success: false,
-        message: 'El código de barras (idproductolote) es obligatorio.',
-        data: []
-      };
+      return { success: false, message: 'El código de barras es obligatorio.', data: [] };
     }
-
     if (!idsucursal || Number(idsucursal) <= 0) {
-      return {
-        success: false,
-        message: 'El id de sucursal debe ser mayor a 0.',
-        data: []
-      };
+      return { success: false, message: 'El id de sucursal debe ser mayor a 0.', data: [] };
     }
 
     const cleanCode = encodeURIComponent(String(codigoBarras).trim());
-    const url = `${API_BASE_URL}/api/Inventario/obtener-lotes?codigoBarras=${cleanCode}&idsucursal=${encodeURIComponent(idsucursal)}`;
+    let url = `${API_BASE_URL}/api/Inventario/obtener-lotes?codigoBarras=${cleanCode}&idsucursal=${encodeURIComponent(idsucursal)}`;
+    
+    if (idtipoalmacen !== null && idtipoalmacen !== undefined) {
+      url += `&idtipoalmacen=${encodeURIComponent(idtipoalmacen)}`;
+    }
 
     console.log('🔍 [LOTES GENERAL] Consultando:', url);
 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json'
-      }
-    });
-
+    const response = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } });
     const text = await response.text();
 
     if (!text || text.trim() === '') {
-      console.warn('[LOTES GENERAL] Respuesta vacía del servidor.');
       return { success: false, message: 'El servidor devolvió una respuesta vacía.', data: [] };
     }
 
@@ -1115,15 +1202,8 @@ export const obtenerLotesGeneral = async (codigoBarras, idsucursal) => {
     try {
       result = JSON.parse(text);
     } catch (parseError) {
-      console.error('[LOTES GENERAL] Error parseando JSON:', parseError, 'Texto:', text);
-      return {
-        success: false,
-        message: 'Respuesta inválida del servidor.',
-        data: []
-      };
+      return { success: false, message: 'Respuesta inválida del servidor.', data: [] };
     }
-
-    console.log('[LOTES GENERAL] Lotes obtenidos:', result);
 
     return {
       success: result.success === true,
@@ -1131,13 +1211,8 @@ export const obtenerLotesGeneral = async (codigoBarras, idsucursal) => {
       total: result.total || (Array.isArray(result.data) ? result.data.length : 0),
       data: Array.isArray(result.data) ? result.data : []
     };
-
   } catch (error) {
     console.error('❌ [LOTES GENERAL] Error:', error);
-    return {
-      success: false,
-      message: error.message || 'Error al conectar con el servidor.',
-      data: []
-    };
+    return { success: false, message: error.message || 'Error al conectar con el servidor.', data: [] };
   }
 };

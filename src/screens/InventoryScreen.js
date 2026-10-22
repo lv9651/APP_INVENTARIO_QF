@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert, Modal } from 'react-native';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as XLSX from 'xlsx';
 import ScannerScreen from './ScannerScreen';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { 
   getTomaInventario, 
   iniciarInventario,
   finalizarInventario,
-  eliminarTomaInventario  
+  eliminarTomaInventario,
+  listarAlmacenes
 } from '../services/api';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -25,20 +27,44 @@ export default function InventoryScreen({ navigation, route }) {
   const [fechaFinInventario, setFechaFinInventario] = useState(null);
   const [loadingAccion, setLoadingAccion] = useState(false);
   
+  // ESTADOS PARA ALMACÉN
+  const [almacenes, setAlmacenes] = useState([]);
+  const [almacenSeleccionado, setAlmacenSeleccionado] = useState(null);
+  const [cargandoAlmacenes, setCargandoAlmacenes] = useState(false);
+  const [modalAlmacenVisible, setModalAlmacenVisible] = useState(false);
+  
   // Para expandir/colapsar lotes por producto
   const [productosExpandidos, setProductosExpandidos] = useState({});
   
   const user = route.params?.user;
-  const inventarioActivo = route.params?.inventarioActivo;
+ const inventarioActivoRaw = route.params?.inventarioActivo;
+// Si viene como array, tomamos el primer elemento
+const inventarioActivo = Array.isArray(inventarioActivoRaw) 
+  ? inventarioActivoRaw[0] 
+  : inventarioActivoRaw;
+  
+
+  console.log('🏬 inventarioActivo FINAL:', JSON.stringify(inventarioActivo, null, 2));
+console.log('🏬 idtipoalmacen:', inventarioActivo?.idtipoalmacen);
   const sucursalInventario = inventarioActivo?.nombre_sucursal_inventario || '';
   const idSucursalInventario = inventarioActivo?.idsucursal_inventario || '';
   const crearNuevo = route.params?.crearNuevo || false;
   
   // Verificar si es ADMINISTRADOR por el ROLE
   const isAdmin = user?.role === 'ADMINISTRADOR';
+   const insets = useSafeAreaInsets();
   
   // ✅ Si es admin, vista por defecto "todos". Si no, "mis".
   const [viewMode, setViewMode] = useState(isAdmin ? 'todos' : 'mis');
+
+  // Helper para saber si un almacén está habilitado
+const estaHabilitado = (alm) => {
+  if (!alm) return false;
+
+  // Tolerante a mayúsculas/minúsculas
+  const valor = alm.Habilitado ?? alm.habilitado;
+  return valor === 1 || valor === true || valor === '1' || valor === 'true';
+};
 
   // ============================================
   // CARGAR ESTADO DEL INVENTARIO
@@ -59,10 +85,37 @@ export default function InventoryScreen({ navigation, route }) {
     }
   };
 
-  // Cargar estado al montar
   useEffect(() => {
     cargarEstadoInventario();
   }, []);
+
+  // ============================================
+  // CARGAR ALMACENES (SOLO ADMIN)
+  // ============================================
+  useEffect(() => {
+    const cargarAlmacenes = async () => {
+      if (!isAdmin) return;
+      setCargandoAlmacenes(true);
+      try {
+        const data = await listarAlmacenes();
+        const lista = data || [];
+        setAlmacenes(lista);
+
+        // Seleccionar por defecto el primero que esté habilitado
+        const primerHabilitado = lista.find(a => estaHabilitado(a));
+        if (primerHabilitado) {
+          setAlmacenSeleccionado(primerHabilitado);
+        } else if (lista.length > 0) {
+          setAlmacenSeleccionado(lista[0]);
+        }
+      } catch (e) {
+        console.error('Error cargando almacenes:', e);
+      } finally {
+        setCargandoAlmacenes(false);
+      }
+    };
+    cargarAlmacenes();
+  }, [isAdmin]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -81,7 +134,7 @@ export default function InventoryScreen({ navigation, route }) {
       let productos;
       const esAdmin = user?.role === 'ADMINISTRADOR';
       
-      const inventarioActivo = route.params?.inventarioActivo;
+
       const idaperturainventario = inventarioActivo?.idaperturainventario || inventarioActivo?.id || null;
       
       console.log('📦 Cargando productos - Admin:', esAdmin);
@@ -95,7 +148,6 @@ export default function InventoryScreen({ navigation, route }) {
         const todos = await getTomaInventario();
         console.log('Todos los productos (sin filtrar):', todos?.length || 0);
         
-        // 🔍 DEBUG: ver idaperturainventario de cada registro
         console.log('🔍 [DEBUG] idaperturainventario de cada registro:', 
           todos?.map(t => ({
             codigo: t.codigoBarra,
@@ -109,14 +161,12 @@ export default function InventoryScreen({ navigation, route }) {
           typeof idaperturainventario
         );
         
-        // ✅ FILTRAR SOLO POR idaperturainventario (comparación flexible)
         if (idaperturainventario) {
           const filtrados = todos.filter(prod => 
             String(prod.idaperturainventario) === String(idaperturainventario)
           );
           console.log('📦 Productos filtrados por idaperturainventario:', filtrados?.length || 0);
           
-          // ✅ Fallback: si el filtro no devuelve nada, mostrar todos
           if (filtrados.length === 0) {
             console.log('⚠️ Filtro sin resultados → mostrando TODOS los productos');
             productos = todos;
@@ -134,9 +184,6 @@ export default function InventoryScreen({ navigation, route }) {
         return;
       }
 
-      // ==========================================
-      // AGRUPAR POR CÓDIGO DE BARRAS
-      // ==========================================
       const gruposMap = new Map();
 
       productos.forEach(prod => {
@@ -169,7 +216,6 @@ export default function InventoryScreen({ navigation, route }) {
         const grupo = gruposMap.get(codigo);
         grupo.cantidad_nueva += cantNueva;
 
-        // Agregar/actualizar lote
         const loteExistente = grupo.lotes.find(l => l.numLote === numLote);
         if (!loteExistente) {
           grupo.lotes.push({
@@ -182,7 +228,6 @@ export default function InventoryScreen({ navigation, route }) {
           loteExistente.cant_Nueva += cantNueva;
         }
 
-        // Agregar ubicación única
         if (ubicacion && ubicacion !== '-' && !grupo.ubicaciones.includes(ubicacion)) {
           grupo.ubicaciones.push(ubicacion);
         }
@@ -205,18 +250,13 @@ export default function InventoryScreen({ navigation, route }) {
     }
   };
 
-  // Actualizar la lista cuando se edita un producto
   useEffect(() => {
     if (route.params?.productoActualizado && route.params?.actualizarLista) {
-      // Recargar desde el servidor para reflejar todos los lotes
       loadProducts();
       navigation.setParams({ productoActualizado: null, actualizarLista: false });
     }
   }, [route.params]);
 
-  // ============================================
-  // TOGGLE EXPANDIR/CONTRAER LOTES
-  // ============================================
   const toggleExpandir = (codigo) => {
     setProductosExpandidos(prev => ({
       ...prev,
@@ -241,11 +281,23 @@ export default function InventoryScreen({ navigation, route }) {
       Alert.alert('Error', 'Seleccione un tipo de inventario');
       return;
     }
+
+    if (!almacenSeleccionado) {
+      Alert.alert('Error', 'Seleccione un almacén');
+      return;
+    }
+
+    // Validar que el almacén no esté bloqueado
+    if (!estaHabilitado(almacenSeleccionado)) {
+      Alert.alert('🔒 Almacén bloqueado', 'El almacén seleccionado está temporalmente deshabilitado. Elija otro.');
+      return;
+    }
     
     Alert.alert(
       'Iniciar Inventario',
       `¿Está seguro de INICIAR el inventario ${tipoInventario === 'TOTAL' ? 'TOTAL' : 'PARCIAL'}?\n\n` +
-      `🏢 Sucursal: ${user?.sucursalNombre || 'N/A'}\n\n` +
+      `🏢 Sucursal: ${user?.sucursalNombre || 'N/A'}\n` +
+      `🏬 Almacén: ${almacenSeleccionado.descripcion || 'N/A'}\n\n` +
       `⚠️ Una vez iniciado, todos los usuarios podrán escanear productos.`,
       [
         { text: 'Cancelar', style: 'cancel' },
@@ -257,15 +309,31 @@ export default function InventoryScreen({ navigation, route }) {
               const result = await iniciarInventario(
                 tipoInventario, 
                 String(user?.id), 
-                String(user?.sucursalId || '')
+                String(user?.sucursalId || ''),
+                almacenSeleccionado.idAlmacen
               );
-              console.log(user?.sucursalId);
-              if (result.success) {
-                setInventarioEstado('INICIADO');
-                setFechaInicioInventario(new Date().toLocaleString());
-                Alert.alert('✅ Éxito', result.mensaje || `Inventario ${tipoInventario === 'TOTAL' ? 'TOTAL' : 'PARCIAL'} iniciado correctamente`);
-                loadProducts();
-              } else {
+              console.log('🏬 Almacén enviado:', almacenSeleccionado);
+            if (result.success) {
+  setInventarioEstado('INICIADO');
+  setFechaInicioInventario(new Date().toLocaleString());
+  
+  // 👇 CREAR EL NUEVO inventarioActivo
+  const nuevoInventario = {
+    idaperturainventario: result.idaperturainventario || result.id || null,
+    estado: 'INICIADO',
+    tipo: tipoInventario,
+    idtipoalmacen: almacenSeleccionado.idAlmacen,
+    idsucursal_inventario: String(user?.sucursalId || ''),
+    nombre_sucursal_inventario: user?.sucursalNombre || '',
+    fecha_inicio: new Date().toISOString(),
+  };
+  
+  console.log('🏬 Nuevo inventarioActivo:', nuevoInventario);
+  navigation.setParams({ inventarioActivo: nuevoInventario });
+  
+  Alert.alert('✅ Éxito', result.mensaje || `Inventario ${tipoInventario === 'TOTAL' ? 'TOTAL' : 'PARCIAL'} iniciado correctamente`);
+  loadProducts();
+}else {
                 Alert.alert('Error', result.message || 'No se pudo iniciar el inventario');
               }
             } catch (error) {
@@ -283,7 +351,7 @@ export default function InventoryScreen({ navigation, route }) {
   const handleFinalizarInventario = () => {
     const totalUnits = items.reduce((sum, i) => sum + (i.cantidad_nueva || 0), 0);
     
-    const inventarioActivo = route.params?.inventarioActivo;
+
     const idaperturainventario = inventarioActivo?.idaperturainventario || inventarioActivo?.id || null;
     
     if (!idaperturainventario) {
@@ -293,7 +361,7 @@ export default function InventoryScreen({ navigation, route }) {
     
     Alert.alert(
       'Finalizar Inventario',
-      `¿Está seguro de FINALIZAR el inventario?\n\n📋 Tipo: ${tipoInventario === 'TOTAL' ? 'INVENTARIO TOTAL' : 'INVENTARIO PARCIAL'}\n📦 Productos registrados: ${items.length}\n📊 Unidades totales: ${totalUnits}\n\n⚠️ Después de finalizar, NO se podrán agregar más productos.`,
+      `¿Está seguro de FINALIZAR el inventario?\n\n📋 Tipo: ${tipoInventario === 'TOTAL' ? 'INVENTARIO TOTAL' : 'INVENTARIO PARCIAL'}\n🏬 Almacén: ${almacenSeleccionado?.descripcion || 'N/A'}\n📦 Productos registrados: ${items.length}\n📊 Unidades totales: ${totalUnits}\n\n⚠️ Después de finalizar, NO se podrán agregar más productos.`,
       [
         { text: 'Cancelar', style: 'cancel' },
         { 
@@ -378,7 +446,6 @@ export default function InventoryScreen({ navigation, route }) {
     }
   };
   
-  // Eliminar TODOS los lotes del producto
   const deleteItem = async (item) => {
     const totalRegistros = item.lotes?.length || 1;
     
@@ -430,9 +497,6 @@ export default function InventoryScreen({ navigation, route }) {
     );
   };
 
-  // ==========================================
-  // EXPORTAR A EXCEL: 1 fila por lote
-  // ==========================================
   const exportToExcel = async () => {
     if (items.length === 0) {
       Alert.alert('Error', 'No hay productos para exportar');
@@ -440,7 +504,6 @@ export default function InventoryScreen({ navigation, route }) {
     }
 
     try {
-      // Expandir: una fila por lote
       const data = [];
       let contador = 1;
 
@@ -457,6 +520,7 @@ export default function InventoryScreen({ navigation, route }) {
               'Usuario': item.usuario,
               'Fecha_Edicion': item.fecha_edicion,
               'Tipo_Inventario': tipoInventario || 'N/A',
+              'Almacen': almacenSeleccionado?.descripcion || 'N/A',
               'sucursal_destino': item.sucursal_destino || 'N/A',
               'ubicacion': lote.ubicacion || 'N/A'
             });
@@ -472,6 +536,7 @@ export default function InventoryScreen({ navigation, route }) {
             'Usuario': item.usuario,
             'Fecha_Edicion': item.fecha_edicion,
             'Tipo_Inventario': tipoInventario || 'N/A',
+            'Almacen': almacenSeleccionado?.descripcion || 'N/A',
             'sucursal_destino': item.sucursal_destino || 'N/A',
             'ubicacion': item.ubicacion || 'N/A'
           });
@@ -515,17 +580,20 @@ export default function InventoryScreen({ navigation, route }) {
     );
   }
 
-  if (showScanner) {
-    return (
-      <ScannerScreen 
-        onScan={addItem} 
-        onClose={() => setShowScanner(false)} 
-        navigation={navigation} 
-        user={user} 
-        idaperturainventario={inventarioActivo?.idaperturainventario || null} 
-      />
-    );
-  }
+ if (showScanner) {
+  console.log('🏬 [Inventory] Pasando a Scanner - inventarioActivo:', JSON.stringify(inventarioActivo, null, 2));
+  console.log('🏬 [Inventory] idtipoalmacen a pasar:', inventarioActivo?.idtipoalmacen);
+  return (
+    <ScannerScreen 
+      onScan={addItem} 
+      onClose={() => setShowScanner(false)} 
+      navigation={navigation} 
+      user={user} 
+      idaperturainventario={inventarioActivo?.idaperturainventario || null} 
+      inventarioActivo={inventarioActivo}
+    />
+  );
+}
 
   return (
     <View style={styles.container}>
@@ -573,7 +641,7 @@ export default function InventoryScreen({ navigation, route }) {
                 disabled={inventarioEstado === 'INICIADO'}
               >
                 <Text style={[styles.tipoButtonText, tipoInventario === 'PARCIAL' && styles.tipoButtonTextActive]}>
-                  📋 PARCIAL
+                  📋 CICLICO
                 </Text>
               </TouchableOpacity>
               
@@ -591,6 +659,30 @@ export default function InventoryScreen({ navigation, route }) {
                 </Text>
               </TouchableOpacity>
             </View>
+          </View>
+
+          {/* Selector de Almacén */}
+          <View style={styles.tipoSelector}>
+            <Text style={styles.tipoLabel}>Tipo de almacén:</Text>
+            <TouchableOpacity
+              style={[
+                styles.almacenSelector,
+                inventarioEstado === 'INICIADO' && styles.tipoButtonDisabled,
+              ]}
+              onPress={() => setModalAlmacenVisible(true)}
+              disabled={inventarioEstado === 'INICIADO' || cargandoAlmacenes || almacenes.length === 0}
+            >
+              <Text style={styles.almacenSelectorText} numberOfLines={1}>
+                {cargandoAlmacenes
+                  ? 'Cargando...'
+                  : almacenSeleccionado
+                    ? `${estaHabilitado(almacenSeleccionado) ? '🏬' : '🔒'} ${almacenSeleccionado.descripcion}${estaHabilitado(almacenSeleccionado) ? '' : ' (Bloqueado)'}`
+                    : almacenes.length === 0
+                      ? 'No hay almacenes'
+                      : 'Seleccionar almacén'}
+              </Text>
+              <Text style={styles.almacenSelectorIcon}>▼</Text>
+            </TouchableOpacity>
           </View>
           
           <View style={styles.adminButtons}>
@@ -679,6 +771,7 @@ export default function InventoryScreen({ navigation, route }) {
         keyExtractor={(item) => item.codigobarra}
         contentContainerStyle={{ paddingBottom: 15 }}
         showsVerticalScrollIndicator={true}
+          style={{ flex: 1 }} 
         renderItem={({ item }) => {
           const totalLotes = item.lotes?.length || 0;
           const mostrarTodos = productosExpandidos[item.codigobarra] === true;
@@ -691,7 +784,6 @@ export default function InventoryScreen({ navigation, route }) {
               <Text style={styles.barcode}>📷 {item.codigobarra}</Text>
               <Text style={styles.productName}>📝 {item.name?.substring(0, 50)}</Text>
               
-              {/* Lotes anidados */}
               {item.lotes && item.lotes.length > 0 ? (
                 <View style={styles.lotesContainer}>
                   <Text style={styles.lotesTitle}>
@@ -742,10 +834,11 @@ export default function InventoryScreen({ navigation, route }) {
                     onPress={() => {
                       navigation.navigate('EditProduct', { 
                         barcode: item.codigobarra,
-                        ubicacion: item.ubicaciones?.[0] || '',
+                          ubicacion: item.ubicaciones?.[0] || '-',
                         isNew: false,
                         user: user,
                         idaperturainventario: item.idaperturainventario,
+                          idtipoalmacen: inventarioActivo?.idtipoalmacen || null
                       });
                     }}
                   >
@@ -771,7 +864,7 @@ export default function InventoryScreen({ navigation, route }) {
         }
       />
       
-      <View style={styles.buttonRow}>
+    <View style={[styles.buttonRow, { paddingBottom: Math.max(insets.bottom, 10) }]}>
         <TouchableOpacity style={[styles.button, styles.scanButton]} onPress={() => setShowScanner(true)}>
           <Text style={styles.buttonText}>📷 Escanear</Text>
         </TouchableOpacity>
@@ -781,7 +874,73 @@ export default function InventoryScreen({ navigation, route }) {
         </TouchableOpacity>
       </View>
       
-      <View style={styles.bottomSpace} />
+
+
+      {/* MODAL PARA SELECCIONAR ALMACÉN */}
+      <Modal
+        visible={modalAlmacenVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setModalAlmacenVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Seleccionar Almacén</Text>
+
+            <FlatList
+              data={almacenes}
+              keyExtractor={(item) => item.idAlmacen.toString()}
+              renderItem={({ item }) => {
+                const bloqueado = !estaHabilitado(item);
+                const seleccionado = almacenSeleccionado?.idAlmacen === item.idAlmacen;
+
+                return (
+                  <TouchableOpacity
+                    style={[
+                      styles.almacenOption,
+                      seleccionado && styles.almacenOptionSelected,
+                      bloqueado && styles.almacenOptionBloqueado,
+                    ]}
+                    onPress={() => {
+                      if (bloqueado) {
+                        Alert.alert(
+                          '🔒 Almacén bloqueado',
+                          'Este almacén está temporalmente deshabilitado.'
+                        );
+                        return;
+                      }
+                      setAlmacenSeleccionado(item);
+                      setModalAlmacenVisible(false);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.almacenOptionText,
+                        seleccionado && styles.almacenOptionTextSelected,
+                        bloqueado && styles.almacenOptionTextBloqueado,
+                      ]}
+                    >
+                      {bloqueado ? '🔒 ' : '🏬 '}
+                      {item.descripcion}
+                      {bloqueado ? ' (Bloqueado)' : ''}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              }}
+              ListEmptyComponent={
+                <Text style={styles.modalEmptyText}>No hay almacenes disponibles</Text>
+              }
+            />
+
+            <TouchableOpacity
+              style={styles.modalCloseButton}
+              onPress={() => setModalAlmacenVisible(false)}
+            >
+              <Text style={styles.modalCloseButtonText}>Cerrar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -885,6 +1044,28 @@ const styles = StyleSheet.create({
   tipoButtonTextActive: {
     color: '#fff',
   },
+
+  almacenSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#ecf0f1',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  almacenSelectorText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+  },
+  almacenSelectorIcon: {
+    fontSize: 12,
+    color: '#7f8c8d',
+    marginLeft: 8,
+  },
+
   adminButtons: {
     marginBottom: 0,
   },
@@ -983,7 +1164,6 @@ const styles = StyleSheet.create({
   usuario: { fontSize: 10, color: '#8e44ad', marginTop: 4 },
   quantityNew: { fontSize: 13, color: '#27ae60', fontWeight: 'bold', marginTop: 4 },
 
-  // Lotes anidados
   lotesContainer: {
     marginTop: 6,
     backgroundColor: '#f8fafc',
@@ -1082,5 +1262,72 @@ const styles = StyleSheet.create({
   buttonText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
   bottomSpace: {
     height: 60,
-  }
+  },
+
+  // MODAL DE ALMACÉN
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+    width: '88%',
+    maxHeight: '75%',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 15,
+    color: '#2c3e50',
+  },
+  almacenOption: {
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    borderRadius: 8,
+    marginBottom: 6,
+    backgroundColor: '#f8fafc',
+  },
+  almacenOptionSelected: {
+    backgroundColor: '#3498db',
+  },
+  almacenOptionBloqueado: {
+    backgroundColor: '#f0f0f0',
+    opacity: 0.6,
+  },
+  almacenOptionText: {
+    fontSize: 15,
+    color: '#2c3e50',
+    fontWeight: '600',
+  },
+  almacenOptionTextSelected: {
+    color: '#fff',
+  },
+  almacenOptionTextBloqueado: {
+    color: '#95a5a6',
+    fontStyle: 'italic',
+  },
+  modalEmptyText: {
+    textAlign: 'center',
+    color: '#95a5a6',
+    padding: 20,
+    fontSize: 13,
+  },
+  modalCloseButton: {
+    marginTop: 15,
+    padding: 12,
+    backgroundColor: '#e74c3c',
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modalCloseButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
 });

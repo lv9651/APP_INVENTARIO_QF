@@ -114,58 +114,8 @@ const agruparLotesGeneral = (rawList, defaultSucursalId = 66, defaultSucursalNom
   return grupos;
 };
 
-const existeLoteEnLista = (lotes, numeroLote, fechaValidez) => {
-  if (!numeroLote) return false;
-  const numNorm = String(numeroLote).trim().toUpperCase();
-  const fValNorm = normalizarFecha(fechaValidez);
-
-  return lotes.some(lote => {
-    const numLoteGrupo = String(lote.numeroLote || '').trim().toUpperCase();
-    const fValGrupo = normalizarFecha(lote.fechaValidez);
-    return numLoteGrupo === numNorm && fValGrupo === fValNorm;
-  });
-};
-
-const crearLoteDesdeScanner = (productoData, defaultSucursalId, defaultSucursalNombre) => {
-  const numLote = String(productoData.numLote || 'S/L').trim();
-  const fValidezRaw = productoData.fechaValidez || null;
-  const fValidezNorm = normalizarFecha(fValidezRaw);
-  const idAlmSuc = productoData.idalmacensucursal !== null && productoData.idalmacensucursal !== undefined
-    ? String(productoData.idalmacensucursal).trim()
-    : '0';
-
-  const groupKey = `${numLote.toUpperCase()}__${fValidezNorm}__${idAlmSuc}`;
-  const cantExistNum = parseFloat(productoData.cantExistencial ?? 0) || 0;
-
-  return {
-    key: groupKey,
-    groupKey: groupKey,
-    numeroLote: numLote,
-    fechaValidez: fValidezRaw,
-    idalmacensucursal: productoData.idalmacensucursal,
-    idsucursal: productoData.idsucursal || defaultSucursalId,
-    nombresucursal: productoData.nombresucursal || defaultSucursalNombre,
-    cantidadExistencial: cantExistNum,
-    subLotes: [{
-      key: `scanner-${Date.now()}`,
-      idproductolote: productoData.idproductolote || null,
-      idalmacensucursal: productoData.idalmacensucursal,
-      numeroLote: numLote,
-      fechaRecepcion: productoData.fechaRecepcion || null,
-      fechaValidez: fValidezRaw,
-      fechaFabricacion: productoData.fechaFabricacion || null,
-      cantidadExistencial: cantExistNum,
-      idsucursal: productoData.idsucursal || defaultSucursalId,
-      nombresucursal: productoData.nombresucursal || defaultSucursalNombre
-    }],
-    cantInput: '',
-    ubicacionInput: '',
-    isModified: false,
-    esDelScanner: true
-  };
-};
-
 export default function EditProductScreen({ route, navigation }) {
+  const params = route?.params || {};
   const { 
     barcode, 
     ubicacion,
@@ -174,8 +124,10 @@ export default function EditProductScreen({ route, navigation }) {
     esObligatorio, 
     fromScanner, 
     productoData,
-    idaperturainventario  
-  } = route.params || {};
+    idaperturainventario ,
+      idtipoalmacen,          // 👈 AGREGAR
+  inventarioActivo 
+  } = params;
   
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -199,9 +151,9 @@ export default function EditProductScreen({ route, navigation }) {
   const [filtroCantidad, setFiltroCantidad] = useState('CON_CANTIDAD');
   const [modoEditarReal, setModoEditarReal] = useState(false);
 
-  // Bloquear botón atrás si es obligatorio
+  // Bloquear botón atrás solo si es obligatorio Y hay lotes
   useEffect(() => {
-    if (esObligatorio) {
+    if (esObligatorio && lotes.length > 0) {
       const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
         Alert.alert('Atención', 'Debe guardar la cantidad antes de salir', [{ text: 'OK' }]);
         return true;
@@ -213,8 +165,10 @@ export default function EditProductScreen({ route, navigation }) {
       });
 
       return () => backHandler.remove();
+    } else {
+      navigation?.setOptions?.({ headerLeft: undefined, gestureEnabled: true });
     }
-  }, [esObligatorio, navigation]);
+  }, [esObligatorio, lotes.length, navigation]);
 
   useEffect(() => {
     loadInitialData();
@@ -228,8 +182,8 @@ export default function EditProductScreen({ route, navigation }) {
 
   // ==========================================
   // CARGAR LOTES
-  // - Modo EDITAR: usa almacen.TomaInventario (prellenado + lote del scanner marcado)
-  // - Modo SCANNER/NUEVO: usa catálogo del almacén
+  // - Modo EDITAR: usa almacen.TomaInventario
+  // - Modo SCANNER/NUEVO: usa catálogo del almacén (SOLO lo que devuelve el API)
   // ==========================================
   const loadLotes = async (codigoBarra, loteScanner = null, isEditMode = false) => {
     const idsucursal = user?.sucursalId;
@@ -238,7 +192,6 @@ export default function EditProductScreen({ route, navigation }) {
     console.log('   codigoBarra:', codigoBarra);
     console.log('   isEditMode:', isEditMode);
     console.log('   user.id:', user?.id);
-    console.log('   loteScanner.numLote:', loteScanner?.numLote);
 
     if (!codigoBarra) {
       setLotes([]);
@@ -264,20 +217,12 @@ export default function EditProductScreen({ route, navigation }) {
         });
 
         console.log('📦 [LOTES] Registros del producto:', registrosProducto.length);
-        console.log('📦 [LOTES] Data:', JSON.stringify(registrosProducto, null, 2));
 
-        let grupos = registrosProducto.map((reg, idx) => {
+        const grupos = registrosProducto.map((reg, idx) => {
           const cantNueva = parseFloat(reg.cant_Nueva) || 0;
           const ubic = reg.ubicacion || '';
           const numLote = String(reg.numLote || 'S/L').trim();
           const idToma = reg.idTomaInventario || reg.IdTomaInventario || reg.idtomainventario || null;
-
-          // 👇 ¿Este registro corresponde al lote del scanner?
-          const esDelScanner = loteScanner && loteScanner.numLote
-            ? numLote.toUpperCase() === String(loteScanner.numLote).trim().toUpperCase()
-            : false;
-
-          console.log(`   Lote "${numLote}" → esDelScanner: ${esDelScanner}`);
 
           return {
             key: `reg-${idToma || idx}`,
@@ -293,7 +238,7 @@ export default function EditProductScreen({ route, navigation }) {
             cantInput: cantNueva > 0 ? String(cantNueva) : '',
             ubicacionInput: ubic && ubic !== '-' ? ubic : '',
             isModified: false,
-            esDelScanner: esDelScanner,  // 👈 MARCA el lote del scanner
+            esDelScanner: false,
             subLotes: [{
               key: `sub-${idToma || idx}`,
               numeroLote: numLote,
@@ -306,16 +251,6 @@ export default function EditProductScreen({ route, navigation }) {
             }]
           };
         });
-
-        // Si viene un lote del scanner que NO está en TomaInventario, lo agregamos
-        if (loteScanner && loteScanner.numLote) {
-          const yaExiste = existeLoteEnLista(grupos, loteScanner.numLote, loteScanner.fechaValidez);
-          if (!yaExiste) {
-            console.log('➕ [LOTES] Agregando lote del scanner que no estaba:', loteScanner.numLote);
-            const loteNuevo = crearLoteDesdeScanner(loteScanner, idsucursal, user?.sucursalNombre);
-            grupos = [loteNuevo, ...grupos];
-          }
-        }
 
         console.log(`✅ [LOTES] ${grupos.length} registros para editar`);
         setLotes(grupos);
@@ -331,6 +266,7 @@ export default function EditProductScreen({ route, navigation }) {
 
     // ==========================================
     // MODO SCANNER / NUEVO: catálogo del almacén
+    // SOLO lo que devuelve el API. NO se agrega nada extra.
     // ==========================================
     if (!idsucursal) {
       setLotes([]);
@@ -339,21 +275,21 @@ export default function EditProductScreen({ route, navigation }) {
     }
 
     try {
-      console.log('📦 [LOTES] Modo SCANNER/NUEVO - catálogo del almacén');
-      const res = await obtenerLotesGeneral(codigoBarra, idsucursal);
+      const idtipoalmacen = route?.params?.inventarioActivo?.idtipoalmacen 
+        || route?.params?.idtipoalmacen 
+        || null;
+
+      console.log('🏬 idtipoalmacen enviado a lotes:', idtipoalmacen);
+
+      const res = await obtenerLotesGeneral(codigoBarra, idsucursal, idtipoalmacen);
 
       let agrupados = [];
 
       if (res && res.success && Array.isArray(res.data) && res.data.length > 0) {
         agrupados = agruparLotesGeneral(res.data, idsucursal, user?.sucursalNombre);
-      }
-
-      if (loteScanner && loteScanner.numLote) {
-        const yaExiste = existeLoteEnLista(agrupados, loteScanner.numLote, loteScanner.fechaValidez);
-        if (!yaExiste) {
-          console.log('➕ [LOTES] Agregando lote del scanner:', loteScanner.numLote);
-          agrupados = [crearLoteDesdeScanner(loteScanner, idsucursal, user?.sucursalNombre), ...agrupados];
-        }
+      } else {
+        console.log('⚠️ [LOTES] El API no devolvió lotes para este producto/almacén');
+        agrupados = [];
       }
 
       setLotes(agrupados);
@@ -400,21 +336,6 @@ export default function EditProductScreen({ route, navigation }) {
           cant_Nueva: ''
         });
 
-        const loteScanner = {
-          numLote: productoData.numLote,
-          fechaValidez: productoData.fechaValidez,
-          fechaRecepcion: productoData.fechaRecepcion,
-          fechaFabricacion: productoData.fechaFabricacion,
-          cantExistencial: productoData.cantExistencial,
-          cant_Nueva: productoData.cant_Nueva,
-          ubicacion: productoData.ubicacion,
-          idproductolote: productoData.idproductolote,
-          idalmacensucursal: productoData.idalmacensucursal,
-          idsucursal: productoData.idsucursal,
-          nombresucursal: productoData.nombresucursal
-        };
-
-        // Detectar si el producto ya existe en TomaInventario
         console.log('🔍 [EDIT] Verificando si el producto ya tiene registros...');
         let yaExiste = false;
         try {
@@ -436,11 +357,11 @@ export default function EditProductScreen({ route, navigation }) {
         if (yaExiste) {
           console.log('✏️ [EDIT] Producto YA inventariado → modo EDITAR');
           setModoEditarReal(true);
-          await loadLotes(codigoBarraFinal, loteScanner, true);
+          await loadLotes(codigoBarraFinal, null, true);
         } else {
           console.log('📷 [EDIT] Producto NUEVO → modo SCANNER');
           setModoEditarReal(false);
-          await loadLotes(codigoBarraFinal, loteScanner, false);
+          await loadLotes(codigoBarraFinal, null, false);
         }
 
         setLoading(false);
@@ -501,39 +422,8 @@ export default function EditProductScreen({ route, navigation }) {
           ubicacion: existingTake.ubicacion || '',
         });
 
-        let loteScanner = null;
-        if (productoData && productoData.numLote) {
-          loteScanner = {
-            numLote: productoData.numLote,
-            fechaValidez: productoData.fechaValidez,
-            fechaRecepcion: productoData.fechaRecepcion,
-            fechaFabricacion: productoData.fechaFabricacion,
-            cantExistencial: productoData.cantExistencial,
-            cant_Nueva: productoData.cant_Nueva,
-            ubicacion: productoData.ubicacion,
-            idproductolote: productoData.idproductolote,
-            idalmacensucursal: productoData.idalmacensucursal,
-            idsucursal: productoData.idsucursal,
-            nombresucursal: productoData.nombresucursal
-          };
-        } else if (existingTake.numLote) {
-          loteScanner = {
-            numLote: existingTake.numLote,
-            fechaValidez: existingTake.fechaValidez,
-            fechaRecepcion: existingTake.fechaRecepcion,
-            fechaFabricacion: existingTake.fechaFabricacion,
-            cantExistencial: existingTake.cantExistencial,
-            cant_Nueva: existingTake.cant_Nueva,
-            ubicacion: existingTake.ubicacion,
-            idproductolote: existingTake.idproductolote,
-            idalmacensucursal: existingTake.idalmacensucursal,
-            idsucursal: existingTake.idsucursal,
-            nombresucursal: existingTake.nombresucursal
-          };
-        }
-
         setModoEditarReal(true);
-        await loadLotes(existingTake.codigobarra || barcode, loteScanner, true);
+        await loadLotes(existingTake.codigobarra || barcode, null, true);
       } else {
         console.log('❌ [EDIT] existingTake vacío o sin codigobarra');
         Alert.alert('Error', 'No se encontró el producto');
@@ -567,10 +457,18 @@ export default function EditProductScreen({ route, navigation }) {
       )
     );
   };
-
-  // ==========================================
-  // GUARDAR
-  // ==========================================
+const invActivoParaVolver =
+  inventarioActivo ||
+  (idaperturainventario
+    ? {
+        idaperturainventario,
+        idtipoalmacen: idtipoalmacen ?? null,
+        estado: 'INICIADO',
+        tipo: route.params?.tipoInventario || 'PARCIAL',
+        idsucursal_inventario: String(user?.sucursalId || ''),
+        nombre_sucursal_inventario: user?.sucursalNombre || '',
+      }
+    : undefined);
   const handleSave = async () => {
     if (!lotes || lotes.length === 0) {
       Alert.alert('Atención', 'No hay lotes para registrar');
@@ -582,16 +480,11 @@ export default function EditProductScreen({ route, navigation }) {
     const errores = [];
 
     try {
-      // ==========================================
-      // EDITAR: eliminar previos + reinsertar
-      // ==========================================
       if (modoEditarReal) {
-        // PASO 1: Eliminar registros previos
         console.log('🗑️ Eliminando registros previos...');
         for (const lote of lotes) {
           if (lote.idTomaInventario) {
             try {
-              console.log('   Eliminando idTomaInventario:', lote.idTomaInventario);
               await eliminarTomaInventario(lote.idTomaInventario);
             } catch (errDel) {
               console.error('   ❌ Error eliminando:', lote.idTomaInventario, errDel);
@@ -600,7 +493,6 @@ export default function EditProductScreen({ route, navigation }) {
         }
         console.log('✅ Registros previos eliminados');
 
-        // PASO 2: Reinsertar
         for (const lote of lotes) {
           const cantNueva = lote.cantInput !== '' && !isNaN(parseFloat(lote.cantInput))
             ? parseFloat(lote.cantInput) : 0;
@@ -618,12 +510,15 @@ export default function EditProductScreen({ route, navigation }) {
             idProducto: product.idProducto,
             nombresucursal: lote.nombresucursal || product.nombresucursal,
             idsucursal: lote.idsucursal || user?.sucursalId,
+             idsucursal_destino: route.params?.productoData?.idsucursal_destino 
+    || lote.idsucursal_destino 
+    || product.idsucursal_destino 
+    || user?.sucursalId, 
             sucursal_destino: product.sucursal_destino,
             ubicacion: ubicacionLote,
             cant_Nueva: cantNueva
           };
 
-          console.log('💾 Reinsertando lote:', lote.numeroLote, '| cant:', cantNueva, '| ubic:', ubicacionLote);
           const res = await insertTomaInventario(payload, user, idaperturainventario);
 
           const isSuccess = res?.Success === 1 || res?.success === true;
@@ -632,11 +527,7 @@ export default function EditProductScreen({ route, navigation }) {
             errores.push(`Lote ${lote.numeroLote}: ${res?.Message || res?.message || 'Error'}`);
           }
         }
-      }
-      // ==========================================
-      // INSERTAR: nuevo (scanner o manual)
-      // ==========================================
-      else {
+      } else {
         for (const lote of lotes) {
           const cantNueva = lote.cantInput !== '' && !isNaN(parseFloat(lote.cantInput))
             ? parseFloat(lote.cantInput) : 0;
@@ -660,7 +551,6 @@ export default function EditProductScreen({ route, navigation }) {
             cant_Nueva: cantNueva
           };
 
-          console.log('💾 Insertando lote:', lote.numeroLote, '| cant:', cantNueva, '| ubic:', ubicacionLote);
           const res = await insertTomaInventario(payload, user, idaperturainventario);
 
           const isSuccess = res?.Success === 1 || res?.success === true;
@@ -673,7 +563,7 @@ export default function EditProductScreen({ route, navigation }) {
 
       if (exitoTotal) {
         Alert.alert('✅ Éxito', 'Producto(s) registrado(s) correctamente');
-        navigation.navigate('Inventory', { user, actualizarLista: true });
+        navigation.navigate('Inventory', { user, actualizarLista: true ,   inventarioActivo: invActivoParaVolver });
       } else {
         Alert.alert('⚠️ Advertencia', 'Algunos lotes no pudieron guardarse:\n' + errores.join('\n'));
       }
@@ -687,10 +577,11 @@ export default function EditProductScreen({ route, navigation }) {
   };
 
   const handleCancel = () => {
-    if (esObligatorio) {
+    if (esObligatorio && lotes.length > 0) {
       Alert.alert('Atención', 'Debe guardar la cantidad antes de salir');
     } else {
-      navigation.navigate('Inventory', { user });
+      navigation.navigate('Inventory', { user,
+  inventarioActivo: invActivoParaVolver    });
     }
   };
 
@@ -744,7 +635,6 @@ export default function EditProductScreen({ route, navigation }) {
         <Text style={styles.badgeText}>📷 Código: {product.codigobarra}</Text>
       </View>
       
-      {/* DATOS DEL PRODUCTO */}
       <View style={styles.card}>
         <Text style={styles.label}>🆔 ID Producto</Text>
         <TextInput
@@ -810,7 +700,6 @@ export default function EditProductScreen({ route, navigation }) {
         />
       </View>
 
-      {/* TABLA DE LOTES */}
       <View style={styles.tableCard}>
         <Text style={styles.tableTitle}>📦 Lotes del Producto</Text>
 
@@ -824,7 +713,6 @@ export default function EditProductScreen({ route, navigation }) {
             </Text>
           </TouchableOpacity>
 
-         
           <TouchableOpacity 
             style={[styles.filterTab, filtroCantidad === 'TODOS' && styles.filterTabActive]}
             onPress={() => setFiltroCantidad('TODOS')}
@@ -850,13 +738,21 @@ export default function EditProductScreen({ route, navigation }) {
           <View style={styles.emptyTable}>
             <Text style={styles.emptyTableText}>
               {lotes.length === 0
-                ? 'No se encontraron lotes para este producto'
+                ? 'No se encontraron lotes para este producto en el almacén seleccionado'
                 : filtroCantidad === 'CON_CANTIDAD'
                   ? 'No hay lotes con cantidad > 0'
-                  : filtroCantidad === 'SIN_CANTIDAD'
-                    ? 'No hay lotes con cantidad en 0'
-                    : 'Sin lotes para mostrar'}
+                  : 'Sin lotes para mostrar'}
             </Text>
+
+            {lotes.length === 0 && (
+              <TouchableOpacity
+                style={styles.volverButton}
+                onPress={() => navigation.navigate('Inventory', { user ,
+    inventarioActivo: invActivoParaVolver     })}
+              >
+                <Text style={styles.volverButtonText}>← Volver al inventario</Text>
+              </TouchableOpacity>
+            )}
           </View>
         ) : (
           lotesFiltrados.map((lote, index) => (
@@ -864,14 +760,12 @@ export default function EditProductScreen({ route, navigation }) {
               key={lote.key || index} 
               style={[
                 styles.tableRow, 
-                index % 2 === 1 && styles.tableRowAlt,
-                lote.esDelScanner && styles.tableRowScanner
+                index % 2 === 1 && styles.tableRowAlt
               ]}
             >
               <View style={styles.colLote}>
                 <Text style={styles.loteText}>
                   {lote.numeroLote}
-                  {lote.esDelScanner ? '  📷' : ''}
                 </Text>
                 {formatFechaValidez(lote.fechaValidez) ? (
                   <Text style={styles.vencimientoText}>
@@ -1019,11 +913,6 @@ const styles = StyleSheet.create({
     borderBottomColor: '#f1f5f9',
   },
   tableRowAlt: { backgroundColor: '#f8fafc' },
-  tableRowScanner: {
-    backgroundColor: '#fff7e6',
-    borderLeftWidth: 3,
-    borderLeftColor: '#f39c12',
-  },
   colLote: { flex: 1.3, paddingRight: 6, justifyContent: 'center' },
   colCantidad: { flex: 0.9, paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center' },
   colUbicacion: { flex: 1.2, paddingLeft: 4, alignItems: 'center', justifyContent: 'center' },
@@ -1056,6 +945,18 @@ const styles = StyleSheet.create({
   },
   emptyTable: { padding: 20, alignItems: 'center' },
   emptyTableText: { color: '#94a3b8', fontSize: 13, fontStyle: 'italic', textAlign: 'center' },
+  volverButton: {
+    marginTop: 15,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    backgroundColor: '#95a5a6',
+    borderRadius: 8,
+  },
+  volverButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
   resumenContainer: {
     marginTop: 10,
     paddingTop: 8,

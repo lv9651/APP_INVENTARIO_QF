@@ -231,6 +231,8 @@ export default function ScannerScreen({
         esObligatorio: true,
         fromScanner: true,
           idaperturainventario: idaperturainventario, 
+            idtipoalmacen: inventarioActivoParam?.idtipoalmacen || null,
+              inventarioActivo: inventarioActivoParam,  
         productoData: {
           ...productFromCatalog,
           idsucursal_destino: destino.idsucursal_destino,

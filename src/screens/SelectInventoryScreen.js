@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, ScrollView } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Sharing from 'expo-sharing';
-import { getInventarioEstado, exportarExcelDrogueriaPorApertura } from '../services/api';
+import * as FileSystem from 'expo-file-system';
+import { getInventarioEstado, exportarExcelDrogueriaPorApertura, obtenerHistoricoTomaInventario } from '../services/api';
 
 export default function SelectInventoryScreen({ navigation, route }) {
   const { user } = route.params;
@@ -20,14 +21,10 @@ export default function SelectInventoryScreen({ navigation, route }) {
   const cargarEstadoInventario = async () => {
     try {
       const data = await getInventarioEstado();
-      console.log('Estado inventario:', data);
       
-      // ✅ NUEVO: La API devuelve { success: true, data: [...] }
       if (data && data.success && data.data && Array.isArray(data.data)) {
-        // Guardar todos los inventarios activos
         setInventariosActivos(data.data);
         
-        // Buscar el inventario de la sucursal actual
         const nombreSucursal = user?.sucursalNombre || '';
         const inventarioSucursal = data.data.find(item => {
           const nombreInv = (item.nombre_sucursal_inventario || '').toLowerCase().trim();
@@ -41,7 +38,6 @@ export default function SelectInventoryScreen({ navigation, route }) {
           setInventario(null);
         }
       } else if (data && data.estado) {
-        // Fallback para respuesta antigua (un solo objeto)
         setInventario(data);
         setInventariosActivos(data.estado === 'INICIADO' ? [data] : []);
       } else {
@@ -56,6 +52,173 @@ export default function SelectInventoryScreen({ navigation, route }) {
     }
   };
 
+  // ==========================================
+  // FUNCIÓN PARA FORMATO OFICIAL (NO DROGUERÍA)
+  // ==========================================
+  const handleExportarExcelFormato = async (inv) => {
+    const idApertura = inv?.idaperturainventario || inv?.id;
+    if (!idApertura) {
+      Alert.alert('Error', 'No se encontró el identificador de apertura.');
+      return;
+    }
+
+    setExportingId(idApertura);
+    try {
+      // 👇 AQUÍ ESTÁ EL LOGO DE ALTA CALIDAD DE QF 👇
+      const urlLogo = "https://drive.usercontent.google.com/download?id=14E2B3ANYoAygTxZI7iv4K24VNpVue_Ep&export=view&authuser=0"; 
+
+      const dataApi = await obtenerHistoricoTomaInventario(idApertura);
+
+      if (!dataApi || dataApi.length === 0) {
+        Alert.alert('Aviso', 'No hay datos en el histórico para exportar');
+        setExportingId(null);
+        return;
+      }
+
+      let filasHtml = '';
+      dataApi.forEach((item, index) => {
+        const stockSistema = parseFloat(item.cantExistencial) || 0;
+        const stockFisico = parseFloat(item.cant_Nueva) || 0;
+        const diferencia = stockFisico - stockSistema;
+        
+        let fechaVcto = '';
+        if (item.fechaValidez) {
+          const dateStr = String(item.fechaValidez).split('T')[0];
+          const parts = dateStr.split('-');
+          if (parts.length === 3) {
+            fechaVcto = `${parts[2]}/${parts[1]}/${parts[0]}`; 
+          } else {
+            fechaVcto = dateStr;
+          }
+        }
+
+        let colorDif = 'black';
+        if (diferencia > 0) colorDif = 'blue';
+        if (diferencia < 0) colorDif = 'red';
+
+        filasHtml += `
+          <tr>
+            <td style="border: 1px solid #000; text-align: center; font-size: 10px;">${index + 1}</td>
+            <td style="border: 1px solid #000; text-align: center; font-size: 10px;">${item.codigoBarra}</td>
+            <td style="border: 1px solid #000; font-size: 10px;">${item.descripcion}</td>
+            <td style="border: 1px solid #000; font-size: 10px;">${item.laboratorio || ''}</td>
+            <td style="border: 1px solid #000; text-align: center; font-size: 10px;">${fechaVcto}</td>
+            <td style="border: 1px solid #000; text-align: center; font-size: 10px;">${item.numLote || ''}</td>
+            <td style="border: 1px solid #000; text-align: right; font-size: 10px;">${stockSistema}</td>
+            <td style="border: 1px solid #000; text-align: right; font-size: 10px;">${stockFisico}</td>
+            <td style="border: 1px solid #000; text-align: right; font-size: 10px; color: ${colorDif}; font-weight: bold;">${diferencia}</td>
+            <td style="border: 1px solid #000; font-size: 10px;"></td>
+          </tr>
+        `;
+      });
+
+      const hoy = new Date().toLocaleDateString('es-PE');
+      const horaInicio = inv.fecha_inicio ? new Date(inv.fecha_inicio).toLocaleString('es-PE') : hoy;
+      const fechaDescarga = new Date().toLocaleString('es-PE');
+
+      const htmlContent = `
+        <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+        <head>
+          <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+          <style>
+            table { border-collapse: collapse; font-family: Arial, sans-serif; }
+            .celda-header { border: 1px solid #000; padding: 4px; font-size: 10px; font-weight: bold; background-color: #f2f2f2; }
+            .celda-normal { border: 1px solid #000; padding: 4px; font-size: 10px; }
+            .cuadro-logo { border: 1px solid #000; text-align: center; vertical-align: middle; height: 80px; }
+          </style>
+        </head>
+        <body>
+          <table width="100%">
+            <tr>
+              <!-- 👇 CUADRO DEL LOGO 👇 -->
+              <td rowspan="3" class="cuadro-logo" style="width: 15%; height: 80px;">
+                 <img src="${urlLogo}" width="90" height="80" style="display: block; margin: 0 auto; object-fit: contain;" />
+              </td>
+              
+              <td colspan="6" style="border: 1px solid #000; text-align: center; font-weight: bold; font-size: 14px; height: 40px;">
+                HOJA DE TOMA DE INVENTARIO
+              </td>
+              <td colspan="2" class="celda-normal" style="width: 20%;">
+                <b>Código:</b> F.QF.GF.003
+              </td>
+            </tr>
+            <tr>
+              <td colspan="3" class="celda-header">Tipo de documento:</td>
+              <td colspan="3" class="celda-normal">Formato</td>
+              <td class="celda-normal"><b>Versión:</b> 01</td>
+            </tr>
+            <tr>
+              <td colspan="3" class="celda-header">Proceso:</td>
+              <td colspan="3" class="celda-normal">Gestión Farmacéutica</td>
+              <td class="celda-normal"><b>Páginas:</b> 1</td>
+            </tr>
+            <tr>
+              <td colspan="2" class="celda-header" style="text-align: center;">Elaborado por:</td>
+              <td colspan="3" class="celda-header" style="text-align: center;">Revisado por:</td>
+              <td colspan="4" class="celda-header" style="text-align: center;">Aprobado por:</td>
+            </tr>
+            <tr>
+              <td colspan="2" class="celda-normal" style="text-align: center;">Director Técnico</td>
+              <td colspan="3" class="celda-normal" style="text-align: center;">Representante legal</td>
+              <td colspan="4" class="celda-normal" style="text-align: center;">Representante legal</td>
+            </tr>
+            <tr>
+              <td colspan="2" class="celda-normal" style="text-align: center;">Fecha: ${hoy}</td>
+              <td colspan="3" class="celda-normal" style="text-align: center;">Fecha: ${hoy}</td>
+              <td colspan="4" class="celda-normal" style="text-align: center;">Fecha: ${hoy}</td>
+            </tr>
+            <tr>
+              <td colspan="2" class="celda-normal" style="font-weight: bold;">Fecha de Inventario:</td>
+              <td colspan="7" class="celda-normal">${horaInicio}</td>
+            </tr>
+            <tr>
+              <td colspan="9" class="celda-normal" style="text-align: right; font-style: italic; font-size: 12px;">
+                Fecha de Descarga: ${fechaDescarga}
+              </td>
+            </tr>
+            <tr>
+              <td class="celda-header" style="width: 5%; text-align: center;">Ítem</td>
+              <td class="celda-header" style="width: 10%; text-align: center;">Código</td>
+              <td class="celda-header" style="width: 35%; text-align: center;">Descripción</td>
+              <td class="celda-header" style="width: 15%; text-align: center;">Laboratorio</td>
+              <td class="celda-header" style="width: 10%; text-align: center;">Fecha de Vcto</td>
+              <td class="celda-header" style="width: 10%; text-align: center;">Lote</td>
+              <td class="celda-header" style="width: 8%; text-align: center;">Stock sistema (und)</td>
+              <td class="celda-header" style="width: 8%; text-align: center;">Stock físico (und)</td>
+              <td class="celda-header" style="width: 8%; text-align: center;">Diferencia</td>
+              <td class="celda-header" style="width: 15%; text-align: center;">Observaciones</td>
+            </tr>
+            ${filasHtml}
+          </table>
+        </body>
+        </html>
+      `;
+
+      const fileName = `TomaInventario_${idApertura}.xls`;
+      const fileUri = FileSystem.documentDirectory + fileName;
+      
+      await FileSystem.writeAsStringAsync(fileUri, htmlContent, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: 'application/vnd.ms-excel',
+          dialogTitle: 'Compartir Hoja de Toma de Inventario'
+        });
+      }
+
+    } catch (error) {
+      console.error('Error exportando Excel:', error);
+      Alert.alert('Error', 'No se pudo exportar el Excel: ' + error.message);
+    } finally {
+      setExportingId(null);
+    }
+  };
+
+  // ==========================================
+  // FUNCIÓN PARA DROGUERÍA (INTACTA)
+  // ==========================================
   const handleExportarExcel = async (inv) => {
     const idApertura = inv?.idaperturainventario || inv?.id;
     if (!idApertura) {
@@ -65,7 +228,6 @@ export default function SelectInventoryScreen({ navigation, route }) {
 
     setExportingId(idApertura);
     try {
-      console.log('📊 Exportando Excel de Droguería para inventario:', inv);
       const result = await exportarExcelDrogueriaPorApertura(inv);
 
       if (result.success && result.fileUri) {
@@ -98,7 +260,6 @@ export default function SelectInventoryScreen({ navigation, route }) {
       return;
     }
 
-    // 👈 SI ES ADMIN, NO VALIDA SUCURSAL
     if (!isAdmin) {
       const sucursalUsuario = user?.sucursalNombre || '';
       const sucursalInventario = inventario?.nombre_sucursal_inventario || '';
@@ -184,9 +345,6 @@ export default function SelectInventoryScreen({ navigation, route }) {
       <Text style={styles.subtitle}>👤 Usuario: {user?.empleado || user?.name}</Text>
       <Text style={styles.subtitle}>🏢 Sucursal logueada: {user?.sucursalNombre || 'Sin sucursal'}</Text>
       
-      {/* ==========================================
-          ⭐ SECCIÓN: TODOS LOS INVENTARIOS REGISTRADOS
-          ========================================== */}
       {isAdmin && inventariosActivos.length > 0 && (
         <View style={styles.inventariosContainer}>
           <Text style={styles.inventariosTitle}>📋 INVENTARIOS REGISTRADOS</Text>
@@ -207,9 +365,7 @@ export default function SelectInventoryScreen({ navigation, route }) {
                 ]}
                 onPress={() => {
                   if (inv.estado === 'INICIADO') {
-                    // Si el admin toca un inventario, ir a ese inventario (verificando si es Droguería)
                     const targetScreen = esDrog ? 'InventoryDrogueria' : 'Inventory';
-
                     navigation.replace(targetScreen, {
                       user: user,
                       inventarioActivo: inv
@@ -239,11 +395,6 @@ export default function SelectInventoryScreen({ navigation, route }) {
                       📅 Inicio: {new Date(inv.fecha_inicio).toLocaleString()}
                     </Text>
                   )}
-                  {inv.fecha_fin && (
-                    <Text style={styles.inventarioFecha}>
-                      🏁 Fin: {new Date(inv.fecha_fin).toLocaleString()}
-                    </Text>
-                  )}
                   {esSucursalActual && (
                     <Text style={styles.inventarioActualTag}>⭐ Sucursal actual</Text>
                   )}
@@ -252,7 +403,6 @@ export default function SelectInventoryScreen({ navigation, route }) {
                   )}
                 </View>
 
-                {/* Botón Exportar Excel en la esquina inferior de la tarjeta */}
                 {esDrog && (
                   <View style={styles.cardActionsContainer}>
                     <TouchableOpacity
@@ -271,24 +421,37 @@ export default function SelectInventoryScreen({ navigation, route }) {
                     </TouchableOpacity>
                   </View>
                 )}
+                 {/* 👇 NUEVO BOTÓN PARA SUCURSALES NORMALES EN LA LISTA 👇 */}
+                {!esDrog && (
+                  <View style={styles.cardActionsContainer}>
+                    <TouchableOpacity
+                      style={[styles.exportCardBtn, { backgroundColor: '#2980b9' }]}
+                      onPress={() => handleExportarExcelFormato(inv)}
+                      disabled={isExportingThis}
+                    >
+                      {isExportingThis ? (
+                        <View style={styles.btnRow}>
+                          <ActivityIndicator size="small" color="#fff" />
+                          <Text style={styles.exportCardBtnText}> Generando...</Text>
+                        </View>
+                      ) : (
+                        <Text style={styles.exportCardBtnText}>📑 Formato Oficial</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                )}
               </TouchableOpacity>
             );
           })}
         </View>
       )}
       
-      {/* ==========================================
-          BOTÓN CREAR NUEVO INVENTARIO - SOLO ADMIN
-          ========================================== */}
       {isAdmin && (
         <TouchableOpacity style={styles.adminButton} onPress={crearNuevoInventario}>
           <Text style={styles.adminButtonText}>🚀 CREAR NUEVO INVENTARIO</Text>
         </TouchableOpacity>
       )}
       
-      {/* ==========================================
-          INVENTARIO DE LA SUCURSAL ACTUAL
-          ========================================== */}
       {inventario && inventario.estado === 'INICIADO' ? (
         <TouchableOpacity style={styles.card} onPress={conectarInventario}>
           <Text style={styles.cardTitle}>📦 Inventario en tu sucursal</Text>
@@ -328,7 +491,6 @@ export default function SelectInventoryScreen({ navigation, route }) {
             </Text>
           </TouchableOpacity>
 
-          {/* Botón Exportar Excel para Droguería */}
           {esSucursalDrogueria(inventario?.idsucursal_inventario, inventario?.nombre_sucursal_inventario) && (
             <TouchableOpacity 
               style={styles.exportCardBtnGrande} 
@@ -345,6 +507,8 @@ export default function SelectInventoryScreen({ navigation, route }) {
               )}
             </TouchableOpacity>
           )}
+
+         
         </TouchableOpacity>
       ) : (
         <View style={styles.emptyContainer}>
@@ -396,7 +560,6 @@ const styles = StyleSheet.create({
   title: { fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 10, color: '#2c3e50' },
   subtitle: { fontSize: 14, textAlign: 'center', marginBottom: 5, color: '#7f8c8d' },
   
-  // ⭐ INVENTARIOS ACTIVOS
   inventariosContainer: {
     backgroundColor: '#fff',
     padding: 12,
