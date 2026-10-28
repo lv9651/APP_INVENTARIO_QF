@@ -929,6 +929,7 @@ export const agruparItemsParaExcelDrogueria = (rawList) => {
     if (!gruposMap.has(groupKey)) {
       gruposMap.set(groupKey, {
         groupKey,
+        idproducto: String(item.idproducto || item.idProducto || '').trim(),
         codigoBarras: codBarra,
         descripcion: item.Descripcion || item.descripcion || '',
         laboratorio: item.laboratorio || item.Laboratorio || '',
@@ -939,6 +940,9 @@ export const agruparItemsParaExcelDrogueria = (rawList) => {
       });
     } else {
       const grupo = gruposMap.get(groupKey);
+      if (!grupo.idproducto && (item.idproducto || item.idProducto)) {
+        grupo.idproducto = String(item.idproducto || item.idProducto).trim();
+      }
       grupo.subItems.push(subItem);
     }
   });
@@ -972,6 +976,7 @@ export const agruparItemsParaExcelDrogueria = (rawList) => {
     const valorizado = diferencia * grupo.precioc;
 
     gruposConsolidados.push({
+      idproducto: grupo.idproducto || grupo.subItems[0]?.idproducto || grupo.subItems[0]?.idProducto || '',
       codigoBarras: grupo.codigoBarras,
       descripcion: grupo.descripcion,
       laboratorio: grupo.laboratorio,
@@ -1040,6 +1045,7 @@ export const exportarExcelDrogueriaPorApertura = async (inventario) => {
       idubicacion: idUbicacionVal !== null && idUbicacionVal !== undefined ? Number(idUbicacionVal) : null,
       rows: itemsParaReporte.map((item, index) => ({
         n: index + 1,
+        idproducto: item.idproducto,
         codigoBarras: item.codigoBarras,
         descripcion: item.descripcion,
         laboratorio: item.laboratorio,

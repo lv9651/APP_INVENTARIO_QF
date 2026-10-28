@@ -571,6 +571,7 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
         idubicacion: ubiFinal,
         rows: itemsParaReporte.map((item, index) => ({
           n: index + 1,
+          idproducto: item.idproducto,
           codigoBarras: item.codigoBarras,
           descripcion: item.descripcion,
           laboratorio: item.laboratorio,
