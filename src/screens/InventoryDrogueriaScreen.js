@@ -542,24 +542,76 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
   };
 
   const exportToExcel = async () => {
-    if (rawItems.length === 0) {
-      Alert.alert('Error', 'No hay productos para exportar');
-      return;
-    }
+    const idaperturainventario = idAperturaState || inventarioActivoState?.idaperturainventario || inventarioActivoState?.id || route.params?.inventarioActivo?.idaperturainventario || route.params?.idaperturainventario || null;
 
-    // Agrupar y filtrar lotes idénticos para el reporte Excel
-    const itemsParaReporte = agruparItemsParaExcelDrogueria(rawItems);
-
-    if (itemsParaReporte.length === 0) {
-      Alert.alert(
-        'Aviso',
-        'No se encontraron lotes para incluir en el reporte (ambas cantidades son 0).'
-      );
+    if (!idaperturainventario) {
+      Alert.alert('Error', 'No se pudo identificar el inventario activo.');
       return;
     }
 
     setIsExporting(true);
     try {
+      // 1. Consultar datos frescos desde la API respetando el viewMode ("mis" o "todos")
+      let productosFrescos = [];
+      if (viewMode === 'mis') {
+        const misProductos = await obtenerTodosProductoInventariadoDrogueria(user?.id, idaperturainventario);
+        productosFrescos = (misProductos || []).filter(prod => String(prod.idaperturainventario) === String(idaperturainventario));
+      } else if (isAdmin) {
+        const todos = await obtenerTodosProductoInventariadoDrogueria(null, idaperturainventario);
+        productosFrescos = (todos || []).filter(prod => String(prod.idaperturainventario) === String(idaperturainventario));
+      } else {
+        const misProductos = await obtenerTodosProductoInventariadoDrogueria(user?.id, idaperturainventario);
+        productosFrescos = (misProductos || []).filter(prod => String(prod.idaperturainventario) === String(idaperturainventario));
+      }
+
+      // Sincronizar el estado en memoria con los datos más recientes
+      setRawItems(productosFrescos || []);
+
+      if (productosFrescos && productosFrescos.length > 0) {
+        const mapa = {};
+        productosFrescos.forEach(prod => {
+          const key = `${prod.codigoBarra}_${prod.idproducto || ''}`;
+          if (!mapa[key]) {
+            mapa[key] = {
+              key: key,
+              codigobarra: prod.codigoBarra,
+              idproducto: prod.idproducto,
+              name: prod.descripcion || 'Sin descripción',
+              usuario: prod.empleadoRegistro || prod.usuarioRegistro,
+              lotes: [],
+              totalUnidades: 0,
+              idaperturainventario: prod.idaperturainventario
+            };
+          }
+          const cant = parseFloat(prod.cant_nueva ?? 0) || 0;
+          mapa[key].lotes.push({
+            numLote: prod.numLote,
+            cantidad: cant,
+            idproductolote: prod.idproductolote
+          });
+          mapa[key].totalUnidades += cant;
+        });
+        setGroupedItems(Object.values(mapa));
+      } else {
+        setGroupedItems([]);
+      }
+
+      if (!productosFrescos || productosFrescos.length === 0) {
+        Alert.alert('Error', 'No hay productos para exportar en este modo de vista.');
+        return;
+      }
+
+      // 2. Agrupar y filtrar lotes idénticos para el reporte Excel
+      const itemsParaReporte = agruparItemsParaExcelDrogueria(productosFrescos);
+
+      if (itemsParaReporte.length === 0) {
+        Alert.alert(
+          'Aviso',
+          'No se encontraron lotes para incluir en el reporte (ambas cantidades son 0).'
+        );
+        return;
+      }
+
       const ubiFinal = idUbicacion !== null && idUbicacion !== undefined 
         ? Number(idUbicacion) 
         : (inventarioActivoState?.idubicacion ? Number(inventarioActivoState.idubicacion) : null);

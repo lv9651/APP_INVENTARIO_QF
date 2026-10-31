@@ -253,8 +253,8 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
         // Obtener sububicación existente para el producto (escaneo / nuevo)
         if (idProd) {
           try {
-            console.log('🔍 [Escaneo/Nuevo] Consultando sububicación para idproducto:', idProd);
-            const subRes = await ObtenerSububicacion(idProd);
+            console.log('🔍 [Escaneo/Nuevo] Consultando sububicación para idproducto:', idProd, 'idubicacion:', idUbicacionFinal);
+            const subRes = await ObtenerSububicacion(idProd, idUbicacionFinal);
             console.log('📍 [Escaneo/Nuevo] Sububicación obtenida:', subRes);
             if (subRes !== null && subRes !== undefined) {
               const subTexto = typeof subRes === 'string'
@@ -311,8 +311,8 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
         // Obtener sububicación existente para el producto en edición
         if (idProd) {
           try {
-            console.log('🔍 Consultando sububicación para idproducto:', idProd);
-            const subRes = await ObtenerSububicacion(idProd);
+            console.log('🔍 Consultando sububicación para idproducto:', idProd, 'idubicacion:', idUbicacionFinal);
+            const subRes = await ObtenerSububicacion(idProd, idUbicacionFinal);
             console.log('📍 Sububicación obtenida:', subRes);
             const subTexto = typeof subRes === 'string'
               ? subRes
@@ -476,10 +476,11 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
         // Si el usuario ingresó texto en sububicación, se guarda con GuardarEditarSububicacion
         if (productInfo.idproducto && sububicacion.trim() !== '') {
           try {
-            console.log('📍 Guardando sububicación para nuevo producto:', productInfo.idproducto, sububicacion.trim());
+            console.log('📍 Guardando sububicación para nuevo producto:', productInfo.idproducto, sububicacion.trim(), 'idubicacion:', idUbicacionFinal);
             const subRes = await GuardarEditarSububicacion(
               Number(productInfo.idproducto),
-              sububicacion.trim()
+              sububicacion.trim(),
+              idUbicacionFinal
             );
             console.log('📍 Resultado GuardarEditarSububicacion:', subRes);
             if (!subRes || !subRes.success) {
@@ -537,10 +538,11 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
         // 1. Si cambió la sububicación, actualizarla
         if (sububicacionCambio && productInfo.idproducto) {
           try {
-            console.log('📍 Actualizando sububicación en edición:', productInfo.idproducto, sububicacion.trim());
+            console.log('📍 Actualizando sububicación en edición:', productInfo.idproducto, sububicacion.trim(), 'idubicacion:', idUbicacionFinal);
             const subRes = await GuardarEditarSububicacion(
               Number(productInfo.idproducto),
-              sububicacion.trim()
+              sububicacion.trim(),
+              idUbicacionFinal
             );
             console.log('📍 Resultado GuardarEditarSububicacion (edición):', subRes);
             if (!subRes || !subRes.success) {
