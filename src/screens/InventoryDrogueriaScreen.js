@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert, Modal } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert, Modal, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -24,6 +24,7 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
   const [sessionId] = useState(`INV-DROG-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`);
   const [isLoading, setIsLoading] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [viewMode, setViewMode] = useState('mis');
   
   // Estados para control de inventario
@@ -122,8 +123,10 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
     }, [viewMode, user, idAperturaState, inventarioEstado])
   );
 
-  const loadProducts = async () => {
-    setIsLoading(true);
+  const loadProducts = async (isManualRefresh = false) => {
+    if (!isManualRefresh) {
+      setIsLoading(true);
+    }
     try {
       const idaperturainventario = idAperturaState || inventarioActivoState?.idaperturainventario || inventarioActivoState?.id || route.params?.inventarioActivo?.idaperturainventario || route.params?.idaperturainventario || null;
       console.log("[InventoryDrogueriaScreen] IDAPERTURAINVENTARIO: ", idaperturainventario, "ESTADO:", inventarioEstado);
@@ -132,7 +135,7 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
       if (!idaperturainventario || inventarioEstado === 'PENDIENTE') {
         setRawItems([]);
         setGroupedItems([]);
-        setIsLoading(false);
+        if (!isManualRefresh) setIsLoading(false);
         return;
       }
 
@@ -205,7 +208,21 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
     } catch (error) {
       console.error('❌ Error cargando productos en Droguería:', error);
     } finally {
-      setIsLoading(false);
+      if (!isManualRefresh) {
+        setIsLoading(false);
+      }
+    }
+  };
+
+  const handleManualRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await loadProducts(true);
+    } catch (error) {
+      console.error('Error en refresco manual:', error);
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
@@ -728,9 +745,23 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
             📛 {user?.role || 'Sin rol'}  •  🏢 {user?.sucursalNombre || 'Q. F. DROGUERIA'}
           </Text>
         </View>
-        <TouchableOpacity onPress={handleSalir} style={styles.logoutBtn}>
-          <Text style={styles.logoutText}>🚪 Salir</Text>
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity 
+            onPress={handleManualRefresh} 
+            style={styles.refreshBtn}
+            disabled={isRefreshing}
+            activeOpacity={0.7}
+          >
+            {isRefreshing ? (
+              <ActivityIndicator size="small" color="#0284c7" />
+            ) : (
+              <Text style={styles.refreshBtnIcon}>🔄</Text>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleSalir} style={styles.logoutBtn}>
+            <Text style={styles.logoutText}>🚪 Salir</Text>
+          </TouchableOpacity>
+        </View>
       </View>
       
       {/* Lista de Productos Agrupados con Header Scroleable */}
@@ -1146,6 +1177,26 @@ const styles = StyleSheet.create({
   },
   userName: { fontSize: 13, fontWeight: 'bold', color: '#2c3e50' },
   userRole: { fontSize: 11, color: '#64748b', marginTop: 1 },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  refreshBtn: {
+    paddingVertical: 5,
+    paddingHorizontal: 9,
+    backgroundColor: '#e0f2fe',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#bae6fd',
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 34,
+    minHeight: 28,
+  },
+  refreshBtnIcon: {
+    fontSize: 14,
+  },
   logoutBtn: {
     paddingVertical: 5,
     paddingHorizontal: 10,
