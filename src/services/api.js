@@ -1,7 +1,7 @@
 import { createWebModule } from "expo-modules-core";
 import * as FileSystem from 'expo-file-system';
 
-const API_BASE_URL = 'http://apiws.qf.com.pe'; // PRUEBAS
+const API_BASE_URL = 'http://apiqfventas.qf.com.pe'; // PRUEBAS
 //const API_BASE_URL = 'http://apiqfventas.qf.com.pe'; // PRODUCCION
 
 export const login = async (username, password) => {

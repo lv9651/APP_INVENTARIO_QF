@@ -84,6 +84,8 @@ const agruparLotesGeneral = (rawList, defaultSucursalId = 66, defaultSucursalNom
         groupKey: groupKey,
         numeroLote: numLote,
         fechaValidez: fValidezRaw,
+             fechaRecepcion: item.fecharecepcion || item.fechaRecepcion || null,        // 👈 AGREGAR
+        fechaFabricacion: item.fechafabricacion || item.fechaFabricacion || null, 
         idalmacensucursal: item.idalmacensucursal,
         idsucursal: item.idsucursal || defaultSucursalId,
         nombresucursal: item.nombresucursal || defaultSucursalNombre,
@@ -506,7 +508,7 @@ const invActivoParaVolver =
             cantExistencial: lote.cantidadExistencial,
             fechaFabricacion: lote.fechaFabricacion || product.fechaFabricacion || '',
             fechaValidez: lote.fechaValidez || product.fechaValidez || '',
-            fechaRecepcion: lote.fechaRecepcion || product.fechaRecepcion || '',
+           fechaRecepcion:   lote.fechaRecepcion   || sub.fechaRecepcion   || '',
             idProducto: product.idProducto,
             nombresucursal: lote.nombresucursal || product.nombresucursal,
             idsucursal: lote.idsucursal || user?.sucursalId,
