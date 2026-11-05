@@ -1,7 +1,7 @@
 import { createWebModule } from "expo-modules-core";
 import * as FileSystem from 'expo-file-system';
 
-const API_BASE_URL = 'http://apiqfventas.qf.com.pe'; // PRUEBAS
+const API_BASE_URL = 'http://apiws.qf.com.pe'; // PRUEBAS
 //const API_BASE_URL = 'http://apiqfventas.qf.com.pe'; // PRODUCCION
 
 export const login = async (username, password) => {
@@ -373,9 +373,11 @@ export const finalizarInventario = async (idEmpleado, idaperturainventario) => {
 };
 
 // Validar si se puede escanear (antes de cada escaneo)
-export const validarPuedeEscanear = async () => {
+export const validarPuedeEscanear = async (idsucursal) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/Etiqueta/validar-escaneo-inventario`);
+    const url = `${API_BASE_URL}/api/Etiqueta/validar-escaneo-inventario/${idsucursal}`;
+    console.log('🔍 [validarPuedeEscanear] Consultando:', url);
+    const response = await fetch(url);
     const result = await response.json();
     console.log('Validar escaneo:', result);
     return result;

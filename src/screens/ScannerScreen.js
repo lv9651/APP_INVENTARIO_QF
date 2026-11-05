@@ -69,7 +69,8 @@ export default function ScannerScreen({
   useEffect(() => {
     const verificarEstado = async () => {
       try {
-        const validacion = await validarPuedeEscanear();
+        const idSucursal = user?.sucursalId || user?.idsucursal || null;
+        const validacion = await validarPuedeEscanear(idSucursal);
         console.log('Validación escaneo:', validacion);
         
         if (!validacion.permitido) {
@@ -86,7 +87,7 @@ export default function ScannerScreen({
     };
     
     verificarEstado();
-  }, []);
+  }, [user]);
 
   if (!permission) {
     return (
