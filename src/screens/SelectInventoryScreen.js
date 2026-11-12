@@ -99,7 +99,7 @@ export default function SelectInventoryScreen({ navigation, route }) {
         filasHtml += `
           <tr>
             <td style="border: 1px solid #000; text-align: center; font-size: 10px;">${index + 1}</td>
-            <td style="border: 1px solid #000; text-align: center; font-size: 10px;">${item.codigoBarra}</td>
+            <td style="border: 1px solid #000; text-align: center; font-size: 10px;">${item.idproducto}</td>
             <td style="border: 1px solid #000; font-size: 10px;">${item.descripcion}</td>
             <td style="border: 1px solid #000; font-size: 10px;">${item.laboratorio || ''}</td>
             <td style="border: 1px solid #000; text-align: center; font-size: 10px;">${fechaVcto}</td>
