@@ -48,10 +48,11 @@ export default function LoginScreen({ navigation, route }) {
         return;
       }
 
-      const esAdminUser = (info.area || '').toUpperCase().includes('ADMIN');
+      // const esAdminUser = (info.area || '').toUpperCase().includes('ADMIN');
       const todas = await listarSucursales();
 
-      let listaFinal;
+      let listaFinal = todas;
+      /*
       if (esAdminUser) {
         listaFinal = todas;
       } else {
@@ -60,6 +61,7 @@ export default function LoginScreen({ navigation, route }) {
           listaFinal = [{ idsucursal: info.idsucursal, nombreSucursal: 'Mi sucursal' }];
         }
       }
+      */
 
       setSucursales(listaFinal);
 
@@ -93,10 +95,11 @@ export default function LoginScreen({ navigation, route }) {
           if (result.success) {
             const info = await obtenerInfoUsuario(creds.username).catch(() => null);
             const todas = await listarSucursales().catch(() => []);
-            const esAdminUser = (info?.area || result.user?.role || '').toUpperCase().includes('ADMIN');
-            const listaFinal = esAdminUser
-              ? todas
-              : todas.filter(s => s.idsucursal === (info?.idsucursal || result.user?.sucursal));
+            // const esAdminUser = (info?.area || result.user?.role || '').toUpperCase().includes('ADMIN');
+            // const listaFinal = esAdminUser
+            //   ? todas
+            //   : todas.filter(s => s.idsucursal === (info?.idsucursal || result.user?.sucursal));
+            const listaFinal = todas;
 
             let sucursalToUse = listaFinal.find(s => s.idsucursal === creds.sucursal?.idsucursal) || listaFinal[0];
             if (sucursalToUse) {

@@ -716,6 +716,15 @@ const invActivoParaVolver =
           </TouchableOpacity>
 
           <TouchableOpacity 
+            style={[styles.filterTab, filtroCantidad === 'SIN_CANTIDAD' && styles.filterTabActive]}
+            onPress={() => setFiltroCantidad('SIN_CANTIDAD')}
+          >
+            <Text style={[styles.filterTabText, filtroCantidad === 'SIN_CANTIDAD' && styles.filterTabTextActive]}>
+              Sin Cantidad
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
             style={[styles.filterTab, filtroCantidad === 'TODOS' && styles.filterTabActive]}
             onPress={() => setFiltroCantidad('TODOS')}
           >
@@ -743,7 +752,9 @@ const invActivoParaVolver =
                 ? 'No se encontraron lotes para este producto en el almacén seleccionado'
                 : filtroCantidad === 'CON_CANTIDAD'
                   ? 'No hay lotes con cantidad > 0'
-                  : 'Sin lotes para mostrar'}
+                  : filtroCantidad === 'SIN_CANTIDAD'
+                    ? 'No hay lotes con cantidad en 0'
+                    : 'Sin lotes para mostrar'}
             </Text>
 
             {lotes.length === 0 && (
