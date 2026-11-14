@@ -35,6 +35,7 @@ export default function InventoryScreen({ navigation, route }) {
   
   // Para expandir/colapsar lotes por producto
   const [productosExpandidos, setProductosExpandidos] = useState({});
+  const [adminPanelExpanded, setAdminPanelExpanded] = useState(true);
   
   const user = route.params?.user;
  const inventarioActivoRaw = route.params?.inventarioActivo;
@@ -611,167 +612,210 @@ const estaHabilitado = (alm) => {
         </TouchableOpacity>
       </View>
       
-      {/* PANEL DE CONTROL - SOLO PARA ADMINISTRADOR */}
-      {isAdmin && (
-        <View style={styles.adminPanel}>
-          <Text style={styles.adminTitle}>🎮 Panel de Control</Text>
-          
-          <View style={styles.estadoBadge}>
-            <Text style={[
-              styles.estadoBadgeText,
-              inventarioEstado === 'INICIADO' && styles.estadoBadgeVerde,
-              inventarioEstado === 'FINALIZADO' && styles.estadoBadgeRojo,
-              inventarioEstado === 'PENDIENTE' && styles.estadoBadgeAmarillo
-            ]}>
-              {inventarioEstado === 'INICIADO' ? '🟢 INICIADO' : 
-               inventarioEstado === 'FINALIZADO' ? '🔴 FINALIZADO' : '🟡 PENDIENTE'}
-            </Text>
-          </View>
-          
-          <View style={styles.tipoSelector}>
-            <Text style={styles.tipoLabel}>Tipo de inventario:</Text>
-            <View style={styles.tipoButtons}>
-              <TouchableOpacity 
-                style={[
-                  styles.tipoButton, 
-                  tipoInventario === 'PARCIAL' && styles.tipoButtonActive,
-                  inventarioEstado === 'INICIADO' && styles.tipoButtonDisabled
-                ]}
-                onPress={() => handleCambiarTipo('PARCIAL')}
-                disabled={inventarioEstado === 'INICIADO'}
-              >
-                <Text style={[styles.tipoButtonText, tipoInventario === 'PARCIAL' && styles.tipoButtonTextActive]}>
-                  📋 CICLICO
-                </Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={[
-                  styles.tipoButton, 
-                  tipoInventario === 'TOTAL' && styles.tipoButtonActive,
-                  inventarioEstado === 'INICIADO' && styles.tipoButtonDisabled
-                ]}
-                onPress={() => handleCambiarTipo('TOTAL')}
-                disabled={inventarioEstado === 'INICIADO'}
-              >
-                <Text style={[styles.tipoButtonText, tipoInventario === 'TOTAL' && styles.tipoButtonTextActive]}>
-                  📦 TOTAL
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Selector de Almacén */}
-          <View style={styles.tipoSelector}>
-            <Text style={styles.tipoLabel}>Tipo de almacén:</Text>
-            <TouchableOpacity
-              style={[
-                styles.almacenSelector,
-                inventarioEstado === 'INICIADO' && styles.tipoButtonDisabled,
-              ]}
-              onPress={() => setModalAlmacenVisible(true)}
-              disabled={inventarioEstado === 'INICIADO' || cargandoAlmacenes || almacenes.length === 0}
-            >
-              <Text style={styles.almacenSelectorText} numberOfLines={1}>
-                {cargandoAlmacenes
-                  ? 'Cargando...'
-                  : almacenSeleccionado
-                    ? `${estaHabilitado(almacenSeleccionado) ? '🏬' : '🔒'} ${almacenSeleccionado.descripcion}${estaHabilitado(almacenSeleccionado) ? '' : ' (Bloqueado)'}`
-                    : almacenes.length === 0
-                      ? 'No hay almacenes'
-                      : 'Seleccionar almacén'}
-              </Text>
-              <Text style={styles.almacenSelectorIcon}>▼</Text>
-            </TouchableOpacity>
-          </View>
-          
-          <View style={styles.adminButtons}>
-             {(inventarioEstado === 'PENDIENTE' || inventarioEstado === 'FINALIZADO') && (
-              <TouchableOpacity 
-                style={styles.iniciarButton} 
-                onPress={handleIniciarInventario}
-                disabled={loadingAccion}
-              >
-                <Text style={styles.adminButtonText}>
-                  {loadingAccion ? '⏳ Procesando...' : '🚀 INICIAR INVENTARIO'}
-                </Text>
-              </TouchableOpacity>
-            )}
-            
-            {inventarioEstado === 'INICIADO' && (
-              <TouchableOpacity 
-                style={styles.finalizarButton} 
-                onPress={handleFinalizarInventario}
-                disabled={loadingAccion}
-              >
-                <Text style={styles.adminButtonText}>
-                  {loadingAccion ? '⏳ Procesando...' : '🏁 FINALIZAR INVENTARIO'}
-                </Text>
-              </TouchableOpacity>
-            )}
-            
-            {inventarioEstado === 'FINALIZADO' && (
-              <View style={styles.finalizadoMensajeContainer}>
-                <Text style={styles.finalizadoMensajeTexto}>
-                  🔒 El inventario ya fue finalizado.
-                </Text>
-                <Text style={styles.finalizadoMensajeSubtexto}>
-                  Inicie un nuevo inventario presionando "INICIAR INVENTARIO".
-                </Text>
-              </View>
-            )}
-          </View>
-        </View>
-      )}
-      
-      {/* Selector de vista - SOLO si el ROLE es ADMINISTRADOR */}
-      {isAdmin && (
-        <View style={styles.viewSelector}>
-          <TouchableOpacity 
-            style={[styles.viewButton, viewMode === 'mis' && styles.activeButton]}
-            onPress={() => setViewMode('mis')}
-          >
-            <Text style={styles.viewButtonText}>📱 Mis Productos</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.viewButton, viewMode === 'todos' && styles.activeButton]}
-            onPress={() => setViewMode('todos')}
-          >
-            <Text style={styles.viewButtonText}>🌐 Todos los Productos</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-      
-      {/* Mensaje para usuarios que no son ADMINISTRADOR */}
-      {!isAdmin && (
-        <View style={styles.infoBanner}>
-          <Text style={styles.infoText}>📱 Mostrando solo tus productos</Text>
-          {inventarioEstado !== 'INICIADO' && (
-            <Text style={styles.infoTextAdvertencia}>
-              {inventarioEstado === 'PENDIENTE' ? '⏳ Inventario no iniciado. Espere al administrador.' : '🔒 Inventario finalizado. Ya no se pueden agregar productos.'}
-            </Text>
-          )}
-        </View>
-      )}
-      
-      <View style={styles.statsRow}>
-        <View style={styles.statBox}>
-          <Text style={styles.statNumber}>{items.length}</Text>
-          <Text style={styles.statLabel}>Productos</Text>
-        </View>
-        <View style={styles.statBox}>
-          <Text style={styles.statNumber}>{totalUnits}</Text>
-          <Text style={styles.statLabel}>Unidades</Text>
-        </View>
-      </View>
-      
-      {/* LISTA AGRUPADA */}
+      {/* LISTA AGRUPADA CON HEADER SCROLEABLE */}
       <FlatList
         data={items}
         keyExtractor={(item) => item.codigobarra}
         contentContainerStyle={{ paddingBottom: 15 }}
         showsVerticalScrollIndicator={true}
-          style={{ flex: 1 }} 
+        keyboardShouldPersistTaps="handled"
+        style={{ flex: 1 }}
+        ListHeaderComponent={
+          <>
+            {/* PANEL DE CONTROL - SOLO PARA ADMINISTRADOR */}
+            {isAdmin && (
+              <View style={styles.adminPanel}>
+                <TouchableOpacity
+                  style={styles.adminHeaderTouchable}
+                  onPress={() => setAdminPanelExpanded(!adminPanelExpanded)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.adminTitleRow}>
+                    <Text style={styles.adminTitle}>🎮 Panel de Control</Text>
+                    <View style={styles.collapseToggleBadge}>
+                      <Text style={styles.collapseToggleText}>
+                        {adminPanelExpanded ? '▲ Ocultar' : '▼ Ver panel'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {!adminPanelExpanded && (
+                    <View style={styles.adminCompactSummary}>
+                      <Text style={[
+                        styles.compactBadgeText,
+                        inventarioEstado === 'INICIADO' && styles.compactBadgeVerde,
+                        inventarioEstado === 'FINALIZADO' && styles.compactBadgeRojo,
+                        inventarioEstado === 'PENDIENTE' && styles.compactBadgeAmarillo
+                      ]}>
+                        {inventarioEstado === 'INICIADO' ? '🟢 INICIADO' :
+                         inventarioEstado === 'FINALIZADO' ? '🔴 FINALIZADO' : '🟡 PENDIENTE'}
+                      </Text>
+                      <Text style={styles.compactDivider}>•</Text>
+                      <Text style={styles.compactDetailText}>
+                        {tipoInventario === 'TOTAL' ? '📦 TOTAL' : '📋 CICLICO'}
+                      </Text>
+                      <Text style={styles.compactDivider}>•</Text>
+                      <Text style={[styles.compactDetailText, { flexShrink: 1 }]} numberOfLines={1}>
+                        {almacenSeleccionado?.descripcion || 'Sin almacén'}
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+
+                {adminPanelExpanded && (
+                  <>
+                    <View style={styles.estadoBadge}>
+                      <Text style={[
+                        styles.estadoBadgeText,
+                        inventarioEstado === 'INICIADO' && styles.estadoBadgeVerde,
+                        inventarioEstado === 'FINALIZADO' && styles.estadoBadgeRojo,
+                        inventarioEstado === 'PENDIENTE' && styles.estadoBadgeAmarillo
+                      ]}>
+                        {inventarioEstado === 'INICIADO' ? '🟢 INICIADO' : 
+                         inventarioEstado === 'FINALIZADO' ? '🔴 FINALIZADO' : '🟡 PENDIENTE'}
+                      </Text>
+                    </View>
+                    
+                    <View style={styles.tipoSelector}>
+                      <Text style={styles.tipoLabel}>Tipo de inventario:</Text>
+                      <View style={styles.tipoButtons}>
+                        <TouchableOpacity 
+                          style={[
+                            styles.tipoButton, 
+                            tipoInventario === 'PARCIAL' && styles.tipoButtonActive,
+                            inventarioEstado === 'INICIADO' && styles.tipoButtonDisabled
+                          ]}
+                          onPress={() => handleCambiarTipo('PARCIAL')}
+                          disabled={inventarioEstado === 'INICIADO'}
+                        >
+                          <Text style={[styles.tipoButtonText, tipoInventario === 'PARCIAL' && styles.tipoButtonTextActive]}>
+                            📋 CICLICO
+                          </Text>
+                        </TouchableOpacity>
+                        
+                        <TouchableOpacity 
+                          style={[
+                            styles.tipoButton, 
+                            tipoInventario === 'TOTAL' && styles.tipoButtonActive,
+                            inventarioEstado === 'INICIADO' && styles.tipoButtonDisabled
+                          ]}
+                          onPress={() => handleCambiarTipo('TOTAL')}
+                          disabled={inventarioEstado === 'INICIADO'}
+                        >
+                          <Text style={[styles.tipoButtonText, tipoInventario === 'TOTAL' && styles.tipoButtonTextActive]}>
+                            📦 TOTAL
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {/* Selector de Almacén */}
+                    <View style={styles.tipoSelector}>
+                      <Text style={styles.tipoLabel}>Tipo de almacén:</Text>
+                      <TouchableOpacity
+                        style={[
+                          styles.almacenSelector,
+                          inventarioEstado === 'INICIADO' && styles.tipoButtonDisabled,
+                        ]}
+                        onPress={() => setModalAlmacenVisible(true)}
+                        disabled={inventarioEstado === 'INICIADO' || cargandoAlmacenes || almacenes.length === 0}
+                      >
+                        <Text style={styles.almacenSelectorText} numberOfLines={1}>
+                          {cargandoAlmacenes
+                            ? 'Cargando...'
+                            : almacenSeleccionado
+                              ? `${estaHabilitado(almacenSeleccionado) ? '🏬' : '🔒'} ${almacenSeleccionado.descripcion}${estaHabilitado(almacenSeleccionado) ? '' : ' (Bloqueado)'}`
+                              : almacenes.length === 0
+                                ? 'No hay almacenes'
+                                : 'Seleccionar almacén'}
+                        </Text>
+                        <Text style={styles.almacenSelectorIcon}>▼</Text>
+                      </TouchableOpacity>
+                    </View>
+                    
+                    <View style={styles.adminButtons}>
+                      {(inventarioEstado === 'PENDIENTE' || inventarioEstado === 'FINALIZADO') && (
+                        <TouchableOpacity 
+                          style={styles.iniciarButton} 
+                          onPress={handleIniciarInventario}
+                          disabled={loadingAccion}
+                        >
+                          <Text style={styles.adminButtonText}>
+                            {loadingAccion ? '⏳ Procesando...' : '🚀 INICIAR INVENTARIO'}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                      
+                      {inventarioEstado === 'INICIADO' && (
+                        <TouchableOpacity 
+                          style={styles.finalizarButton} 
+                          onPress={handleFinalizarInventario}
+                          disabled={loadingAccion}
+                        >
+                          <Text style={styles.adminButtonText}>
+                            {loadingAccion ? '⏳ Procesando...' : '🏁 FINALIZAR INVENTARIO'}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                      
+                      {inventarioEstado === 'FINALIZADO' && (
+                        <View style={styles.finalizadoMensajeContainer}>
+                          <Text style={styles.finalizadoMensajeTexto}>
+                            🔒 El inventario ya fue finalizado.
+                          </Text>
+                          <Text style={styles.finalizadoMensajeSubtexto}>
+                            Inicie un nuevo inventario presionando "INICIAR INVENTARIO".
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </>
+                )}
+              </View>
+            )}
+            
+            {/* Selector de vista - SOLO si el ROLE es ADMINISTRADOR */}
+            {isAdmin && (
+              <View style={styles.viewSelector}>
+                <TouchableOpacity 
+                  style={[styles.viewButton, viewMode === 'mis' && styles.activeButton]}
+                  onPress={() => setViewMode('mis')}
+                >
+                  <Text style={styles.viewButtonText}>📱 Mis Productos</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.viewButton, viewMode === 'todos' && styles.activeButton]}
+                  onPress={() => setViewMode('todos')}
+                >
+                  <Text style={styles.viewButtonText}>🌐 Todos los Productos</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            
+            {/* Mensaje para usuarios que no son ADMINISTRADOR */}
+            {!isAdmin && (
+              <View style={styles.infoBanner}>
+                <Text style={styles.infoText}>📱 Mostrando solo tus productos</Text>
+                {inventarioEstado !== 'INICIADO' && (
+                  <Text style={styles.infoTextAdvertencia}>
+                    {inventarioEstado === 'PENDIENTE' ? '⏳ Inventario no iniciado. Espere al administrador.' : '🔒 Inventario finalizado. Ya no se pueden agregar productos.'}
+                  </Text>
+                )}
+              </View>
+            )}
+            
+            <View style={styles.statsRow}>
+              <View style={styles.statBox}>
+                <Text style={styles.statNumber}>{items.length}</Text>
+                <Text style={styles.statLabel}>Productos</Text>
+              </View>
+              <View style={styles.statBox}>
+                <Text style={styles.statNumber}>{totalUnits}</Text>
+                <Text style={styles.statLabel}>Unidades</Text>
+              </View>
+            </View>
+          </>
+        }
         renderItem={({ item }) => {
           const totalLotes = item.lotes?.length || 0;
           const mostrarTodos = productosExpandidos[item.codigobarra] === true;
@@ -976,12 +1020,70 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     elevation: 3,
   },
+  adminHeaderTouchable: {
+    paddingVertical: 2,
+  },
+  adminTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
   adminTitle: {
     color: '#fff',
     fontWeight: 'bold',
-    fontSize: 16,
-    marginBottom: 12,
-    textAlign: 'center',
+    fontSize: 15,
+  },
+  collapseToggleBadge: {
+    backgroundColor: '#1abc9c',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  collapseToggleText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  adminCompactSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    backgroundColor: '#34495e',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    marginTop: 4,
+  },
+  compactBadgeText: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  compactBadgeVerde: {
+    backgroundColor: '#27ae60',
+    color: '#fff',
+  },
+  compactBadgeRojo: {
+    backgroundColor: '#e74c3c',
+    color: '#fff',
+  },
+  compactBadgeAmarillo: {
+    backgroundColor: '#f39c12',
+    color: '#fff',
+  },
+  compactDivider: {
+    color: '#7f8c8d',
+    fontSize: 12,
+    marginHorizontal: 4,
+  },
+  compactDetailText: {
+    color: '#ecf0f1',
+    fontSize: 11,
+    fontWeight: 'bold',
   },
   estadoBadge: {
     alignItems: 'center',
