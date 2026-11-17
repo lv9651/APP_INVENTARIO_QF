@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as XLSX from 'xlsx';
-import ScannerScreen from './ScannerScreen';
+import ScannerScreenDrogueria from './ScannerScreenDrogueria';
 import { 
   obtenerTodosProductoInventariadoDrogueria, 
   iniciarInventarioDrogueria,
@@ -695,8 +695,7 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
       estado: inventarioEstado
     };
     return (
-      <ScannerScreen 
-        onScan={() => {}} 
+      <ScannerScreenDrogueria 
         onClose={() => setShowScanner(false)} 
         navigation={navigation} 
         user={user}     

@@ -3,8 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { 
   getProductByBarcode, 
-  validarPuedeEscanear,
-  obtenerProductoInventariadoDrogueria
+  validarPuedeEscanear
 } from '../services/api';
 
 // IDs de sucursales según tu negocio
@@ -18,10 +17,7 @@ export default function ScannerScreen({
   navigation, 
   user, 
   idaperturainventario, 
-  existingProducts = [],
-  inventarioActivo: inventarioActivoParam,
-  tipoInventario,
-  idubicacion
+  inventarioActivo: inventarioActivoParam
 }) {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
@@ -127,72 +123,6 @@ export default function ScannerScreen({
     
     const barcode = result.data;
     console.log('📷 Código escaneado:', barcode);
-    
-    // ===== FLUJO DROGUERÍA =====
-    const esDrogueria = Number(user?.sucursalId) === 66 || 
-                        (user?.sucursalNombre || '').toUpperCase().includes('DROGUERIA');
-
-    if (esDrogueria) {
-      // 1. Verificar si el producto ya existe en los registros locales en memoria
-      let yaExiste = Array.isArray(existingProducts) && existingProducts.some(p => 
-        (p.CodigoBarra || p.codigobarra || p.codigoBarra) === barcode
-      );
-
-      // 2. Si no se encuentra en memoria, verificar directamente en BD
-      if (!yaExiste) {
-        try {
-          const checkDb = await obtenerProductoInventariadoDrogueria(barcode, idaperturainventario);
-          const rawDbList = Array.isArray(checkDb) ? checkDb : (checkDb ? [checkDb] : []);
-          if (rawDbList && rawDbList.length > 0) {
-            yaExiste = true;
-          }
-        } catch (e) {
-          console.log('Error verificando existencia de producto en BD:', e);
-        }
-      }
-
-      console.log(`📤 Scanner Droguería - Barcode: ${barcode} - Modo: ${yaExiste ? 'EDICIÓN' : 'NUEVO'}`);
-      onClose();
-
-      const ubiFinal = idubicacion || inventarioActivoParam?.idubicacion || null;
-      const invActivoCompleto = (inventarioActivoParam && typeof inventarioActivoParam === 'object') 
-        ? { 
-            ...inventarioActivoParam, 
-            tipo: inventarioActivoParam.tipo || tipoInventario || 'TOTAL',
-            idubicacion: ubiFinal
-          }
-        : {
-            idaperturainventario: idaperturainventario,
-            tipo: tipoInventario || 'TOTAL',
-            estado: 'INICIADO',
-            idubicacion: ubiFinal
-          };
-
-      if (yaExiste) {
-        // Redirigir en modo EDICIÓN para evitar duplicados
-        navigation.navigate('EditProductDrogueria', {
-          barcode: barcode,
-          isNew: false,
-          user: user,
-          fromScanner: false,
-          idaperturainventario: idaperturainventario,
-          inventarioActivo: invActivoCompleto,
-          idubicacion: ubiFinal
-        });
-      } else {
-        // Redirigir en modo NUEVO ESCANEO (INSERT)
-        navigation.navigate('EditProductDrogueria', {
-          barcode: barcode,
-          isNew: true,
-          user: user,
-          fromScanner: true,
-          idaperturainventario: idaperturainventario,
-          inventarioActivo: invActivoCompleto,
-          idubicacion: ubiFinal
-        });
-      }
-      return;
-    }
     
     try {
       // ❌ ELIMINADO: Ya no verificamos existencia aquí
