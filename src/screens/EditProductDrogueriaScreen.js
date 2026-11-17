@@ -480,7 +480,8 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
             const subRes = await GuardarEditarSububicacion(
               Number(productInfo.idproducto),
               sububicacion.trim(),
-              idUbicacionFinal
+              idUbicacionFinal,
+              user.id
             );
             console.log('📍 Resultado GuardarEditarSububicacion:', subRes);
             if (!subRes || !subRes.success) {
@@ -542,7 +543,8 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
             const subRes = await GuardarEditarSububicacion(
               Number(productInfo.idproducto),
               sububicacion.trim(),
-              idUbicacionFinal
+              idUbicacionFinal,
+              user.id
             );
             console.log('📍 Resultado GuardarEditarSububicacion (edición):', subRes);
             if (!subRes || !subRes.success) {

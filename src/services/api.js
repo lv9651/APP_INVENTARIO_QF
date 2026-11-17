@@ -1,7 +1,7 @@
 import { createWebModule } from "expo-modules-core";
 import * as FileSystem from 'expo-file-system';
 
-const API_BASE_URL = 'http://apiqfventas.qf.com.pe'; // PRUEBAS
+const API_BASE_URL = 'http://apiws.qf.com.pe'; // PRUEBAS
 //const API_BASE_URL = 'http://apiqfventas.qf.com.pe'; // PRODUCCION
 
 export const login = async (username, password) => {
@@ -1067,12 +1067,13 @@ export const exportarExcelDrogueriaPorApertura = async (inventario) => {
   }
 };
 
-export const GuardarEditarSububicacion = async (idproducto, sububicaciones, idubicacion = null) => {
+export const GuardarEditarSububicacion = async (idproducto, sububicaciones, idubicacion = null, idusuario = 0) => {
   try {
     const payload = {
       idproducto: idproducto !== null && idproducto !== undefined ? Number(idproducto) : null,
       sububicaciones: sububicaciones || '',
-      idubicacion: idubicacion !== null && idubicacion !== undefined ? Number(idubicacion) : null
+      idubicacion: idubicacion !== null && idubicacion !== undefined ? Number(idubicacion) : null,
+      idusuario: idusuario
     };
 
     console.log('📤 [GuardarEditarSububicacion] Enviando payload:', payload);
