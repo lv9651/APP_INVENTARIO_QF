@@ -607,7 +607,7 @@ const estaHabilitado = (alm) => {
             <Text style={styles.sucursalLogueado}>🏢 Sucursal: {user.sucursalNombre}</Text>
           )}
         </View>
-        <TouchableOpacity onPress={() => navigation.replace('Login')}>
+        <TouchableOpacity onPress={() => navigation.replace('SelectInventory', { user })}>
           <Text style={styles.logoutText}>🚪 Salir</Text>
         </TouchableOpacity>
       </View>
