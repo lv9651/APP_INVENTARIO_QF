@@ -19,124 +19,20 @@ import {
   GuardarEditarSububicacion,
   ObtenerSububicacion
 } from '../services/api';
-
-/**
- * Normaliza una fecha a formato YYYY-MM-DD para evitar fallos de agrupación por hora/zona.
- */
-const normalizarFecha = (fecha) => {
-  if (!fecha) return 'SIN_FECHA';
-  try {
-    const str = String(fecha).trim();
-    const part = str.split('T')[0].split(' ')[0].trim();
-    if (part.length === 10 && part.includes('-')) {
-      return part;
-    }
-    const d = new Date(fecha);
-    if (!isNaN(d.getTime())) {
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const dd = String(d.getDate()).padStart(2, '0');
-      return `${yyyy}-${mm}-${dd}`;
-    }
-    return part;
-  } catch (e) {
-    return String(fecha);
-  }
-};
-
-/**
- * Obtiene el timestamp numérico de una fecha para ordenar de más reciente a más antigua.
- */
-const obtenerTimestamp = (fecha) => {
-  if (!fecha) return 0;
-  try {
-    const d = new Date(fecha);
-    const t = d.getTime();
-    return isNaN(t) ? 0 : t;
-  } catch (e) {
-    return 0;
-  }
-};
+import { consolidarLotesDrogueria, obtenerTimestampFecha } from '../utils/drogueriaLotes';
 
 /**
  * Agrupa los lotes con características idénticas (numeroLote, fechaValidez, idalmacensucursal).
  * La cantidadExistencial del grupo es la suma de los sublotes (para filtros).
  * En la tabla visual, cantidadExistencial permanece oculta.
  */
-const agruparLotes = (rawList, isEditMode = false, defaultSucursalId = 66, defaultSucursalNombre = 'Q. F. DROGUERIA') => {
-  const gruposMap = new Map();
-
-  rawList.forEach((item, idx) => {
-    const numLote = String(item.numeroLote || item.numLote || 'S/L').trim();
-    const fValidezRaw = item.fechaValidez || item.fechavalidez || null;
-    const fValidezNorm = normalizarFecha(fValidezRaw);
-    const idAlmSuc = item.idalmacensucursal !== null && item.idalmacensucursal !== undefined
-      ? String(item.idalmacensucursal).trim()
-      : '0';
-
-    const groupKey = `${numLote.toUpperCase()}__${fValidezNorm}__${idAlmSuc}`;
-
-    const cantExistNum = parseFloat(item.cantidadExistencial ?? item.cantExistencial ?? 0) || 0;
-    const cantNuevaNum = parseFloat(item.cant_nueva ?? item.cantNueva ?? 0) || 0;
-
-    const subLoteObj = {
-      key: `${item.idproductolote || idx}`,
-      idproductolote: item.idproductolote,
-      idalmacensucursal: item.idalmacensucursal,
-      numeroLote: numLote,
-      fechaRecepcion: item.fechaRecepcion || item.fecharecepcion || null,
-      fechaValidez: fValidezRaw,
-      fechaFabricacion: item.fechaFabricacion || item.fechafabricacion || null,
-      cantidadExistencial: cantExistNum,
-      cantNueva: String(cantNuevaNum),
-      cant_nueva: cantNuevaNum,
-      idsucursal: item.idsucursal || defaultSucursalId,
-      nombresucursal: item.nombresucursal || defaultSucursalNombre
-    };
-
-    if (!gruposMap.has(groupKey)) {
-      gruposMap.set(groupKey, {
-        key: groupKey,
-        groupKey: groupKey,
-        numeroLote: numLote,
-        fechaValidez: fValidezRaw,
-        idalmacensucursal: item.idalmacensucursal,
-        idsucursal: item.idsucursal || defaultSucursalId,
-        nombresucursal: item.nombresucursal || defaultSucursalNombre,
-        cantidadExistencial: cantExistNum,
-        subLotes: [subLoteObj]
-      });
-    } else {
-      const grupo = gruposMap.get(groupKey);
-      grupo.cantidadExistencial += cantExistNum;
-      grupo.subLotes.push(subLoteObj);
-    }
+const agruparLotes = (rawList, isEditMode = false, defaultSucursalId = 66, defaultSucursalNombre = 'Q. F. DROGUERIA') =>
+  consolidarLotesDrogueria(rawList, {
+    incluirProductoEnClave: false,
+    isEditMode,
+    defaultSucursalId,
+    defaultSucursalNombre,
   });
-
-  return Array.from(gruposMap.values()).map(grupo => {
-    // Ordenar sublotes: fechaRecepcion más reciente primero. Desempate por idproductolote desc.
-    grupo.subLotes.sort((a, b) => {
-      const tA = obtenerTimestamp(a.fechaRecepcion);
-      const tB = obtenerTimestamp(b.fechaRecepcion);
-      if (tB !== tA) return tB - tA;
-      return (Number(b.idproductolote) || 0) - (Number(a.idproductolote) || 0);
-    });
-
-    let cantInputInicial = '0';
-    if (isEditMode) {
-      // En modo edición, el sublote más reciente contiene el valor asignado previamente
-      const cantMasReciente = grupo.subLotes[0]?.cantNueva;
-      cantInputInicial = cantMasReciente !== undefined && cantMasReciente !== null ? String(cantMasReciente) : '0';
-    }
-
-    return {
-      ...grupo,
-      cantInput: cantInputInicial,
-      cantNueva: cantInputInicial,
-      isModified: false
-    };
-  });
-};
 
 export default function EditProductDrogueriaScreen({ route, navigation }) {
   const { 
@@ -433,8 +329,8 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
 
           // Asegurar orden de sublotes: fechaRecepcion más reciente primero
           const sortedSubLotes = [...grupo.subLotes].sort((a, b) => {
-            const tA = obtenerTimestamp(a.fechaRecepcion);
-            const tB = obtenerTimestamp(b.fechaRecepcion);
+            const tA = obtenerTimestampFecha(a.fechaRecepcion);
+            const tB = obtenerTimestampFecha(b.fechaRecepcion);
             if (tB !== tA) return tB - tA;
             return (Number(b.idproductolote) || 0) - (Number(a.idproductolote) || 0);
           });
@@ -565,8 +461,8 @@ export default function EditProductDrogueriaScreen({ route, navigation }) {
             : 0;
 
           const sortedSubLotes = [...grupo.subLotes].sort((a, b) => {
-            const tA = obtenerTimestamp(a.fechaRecepcion);
-            const tB = obtenerTimestamp(b.fechaRecepcion);
+            const tA = obtenerTimestampFecha(a.fechaRecepcion);
+            const tB = obtenerTimestampFecha(b.fechaRecepcion);
             if (tB !== tA) return tB - tA;
             return (Number(b.idproductolote) || 0) - (Number(a.idproductolote) || 0);
           });

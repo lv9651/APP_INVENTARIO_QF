@@ -1,5 +1,6 @@
 import { createWebModule } from "expo-modules-core";
 import * as FileSystem from 'expo-file-system';
+import { consolidarLotesDrogueria } from '../utils/drogueriaLotes';
 
 const API_BASE_URL = 'http://apiws.qf.com.pe'; // PRUEBAS
 //const API_BASE_URL = 'http://apiqfventas.qf.com.pe'; // PRODUCCION
@@ -849,44 +850,6 @@ export const exportarReporteExcelDrogueria = async (payload) => {
 };
 
 /**
- * Normaliza una fecha a formato YYYY-MM-DD para agrupación consistente en Excel.
- */
-const normalizarFechaExcel = (fecha) => {
-  if (!fecha) return '';
-  try {
-    const str = String(fecha).trim();
-    const part = str.split('T')[0].split(' ')[0].trim();
-    if (part.length === 10 && part.includes('-')) {
-      return part;
-    }
-    const d = new Date(fecha);
-    if (!isNaN(d.getTime())) {
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const dd = String(d.getDate()).padStart(2, '0');
-      return `${yyyy}-${mm}-${dd}`;
-    }
-    return part;
-  } catch (e) {
-    return String(fecha);
-  }
-};
-
-/**
- * Obtiene el timestamp numérico de una fecha para ordenar de más reciente a más antigua.
- */
-const obtenerTimestampExcel = (fecha) => {
-  if (!fecha) return 0;
-  try {
-    const d = new Date(fecha);
-    const t = d.getTime();
-    return isNaN(t) ? 0 : t;
-  } catch (e) {
-    return 0;
-  }
-};
-
-/**
  * Agrupa los lotes de Droguería por producto, numLote, fechaValidez e idalmacensucursal para el reporte Excel.
  * - stockSistema: Suma de las cantidades existenciales del grupo de lotes.
  * - stockFisico: Cantidad asignada al lote con la fechaRecepcion más reciente (los otros están en 0).
@@ -898,75 +861,19 @@ const obtenerTimestampExcel = (fecha) => {
  * @returns {Array} Lista de filas consolidadas y filtradas listas para el Excel.
  */
 export const agruparItemsParaExcelDrogueria = (rawList) => {
-  if (!Array.isArray(rawList) || rawList.length === 0) return [];
-
-  const gruposMap = new Map();
-
-  rawList.forEach((item, idx) => {
-    const codBarra = String(item.CodigoBarra || item.codigobarra || item.codigoBarra || '').trim();
-    const numLote = String(item.NumLote || item.numLote || item.numeroLote || 'S/L').trim();
-    const fValidezRaw = item.fechavalidez || item.fechaValidez || null;
-    const fValidezNorm = normalizarFechaExcel(fValidezRaw);
-    const idAlmSuc = item.idalmacensucursal !== null && item.idalmacensucursal !== undefined
-      ? String(item.idalmacensucursal).trim()
-      : '0';
-
-    const groupKey = `${codBarra}__${numLote.toUpperCase()}__${fValidezNorm}__${idAlmSuc}`;
-
-    const stockSistema = parseFloat(item.CantExistencial ?? item.cantExistencial ?? item.cantidadExistencial ?? 0) || 0;
-    const stockFisico = parseFloat(item.Cant_nueva ?? item.cant_Nueva ?? item.cant_nueva ?? 0) || 0;
-    const fRecepcion = item.fecharecepcion || item.fechaRecepcion || null;
-    const idProdLote = item.idproductolote ?? idx;
-
-    const subItem = {
-      ...item,
-      stockSistema,
-      stockFisico,
-      fechaRecepcion: fRecepcion,
-      idproductolote: idProdLote
-    };
-
-    if (!gruposMap.has(groupKey)) {
-      gruposMap.set(groupKey, {
-        groupKey,
-        idproducto: String(item.idproducto || item.idProducto || '').trim(),
-        codigoBarras: codBarra,
-        descripcion: item.Descripcion || item.descripcion || '',
-        laboratorio: item.laboratorio || item.Laboratorio || '',
-        numLote: numLote,
-        fechaVencimiento: fValidezNorm,
-        precioc: parseFloat(item.precioc) || 0,
-        subItems: [subItem]
-      });
-    } else {
-      const grupo = gruposMap.get(groupKey);
-      if (!grupo.idproducto && (item.idproducto || item.idProducto)) {
-        grupo.idproducto = String(item.idproducto || item.idProducto).trim();
-      }
-      grupo.subItems.push(subItem);
-    }
+  const lotesConsolidados = consolidarLotesDrogueria(rawList, {
+    incluirProductoEnClave: true,
   });
+
+  if (lotesConsolidados.length === 0) return [];
 
   const gruposConsolidados = [];
 
-  for (const grupo of gruposMap.values()) {
-    // 1. stockSistema = suma de existencias de todos los registros del grupo
-    const totalStockSistema = grupo.subItems.reduce((acc, curr) => acc + curr.stockSistema, 0);
+  for (const grupo of lotesConsolidados) {
+    const totalStockSistema = grupo.stockSistema;
+    const totalStockFisico = grupo.stockFisico;
 
-    // 2. Ordenar sublotes para encontrar el que tiene fechaRecepcion más reciente
-    grupo.subItems.sort((a, b) => {
-      const tA = obtenerTimestampExcel(a.fechaRecepcion);
-      const tB = obtenerTimestampExcel(b.fechaRecepcion);
-      if (tB !== tA) return tB - tA;
-      return (Number(b.idproductolote) || 0) - (Number(a.idproductolote) || 0);
-    });
-
-    // 3. stockFisico = cantidad asignada al sublote con fechaRecepcion más reciente (los demás tienen 0)
-    const totalStockFisico = grupo.subItems[0]?.stockFisico !== undefined
-      ? grupo.subItems[0].stockFisico
-      : 0;
-
-    // 4. Filtrar: si stockSistema es 0 y stockFisico también es 0, NO se incluye en el reporte
+    // Filtrar: si stockSistema es 0 y stockFisico también es 0, NO se incluye en el reporte
     const ambosCero = Math.abs(totalStockSistema) < 0.0001 && Math.abs(totalStockFisico) < 0.0001;
     if (ambosCero) {
       continue;
@@ -976,7 +883,7 @@ export const agruparItemsParaExcelDrogueria = (rawList) => {
     const valorizado = diferencia * grupo.precioc;
 
     gruposConsolidados.push({
-      idproducto: grupo.idproducto || grupo.subItems[0]?.idproducto || grupo.subItems[0]?.idProducto || '',
+      idproducto: grupo.idproducto || grupo.subLotes[0]?.idproducto || grupo.subLotes[0]?.idProducto || '',
       codigoBarras: grupo.codigoBarras,
       descripcion: grupo.descripcion,
       laboratorio: grupo.laboratorio,

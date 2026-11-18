@@ -14,6 +14,7 @@ import {
   ObtenerTodosProductosSucursalDrogueria,
   getInventarioEstado
 } from '../services/api';
+import { agruparProductosVistaDrogueria, formatearFechaCorta } from '../utils/drogueriaLotes';
 import { useFocusEffect } from '@react-navigation/native';
 
 export default function InventoryDrogueriaScreen({ navigation, route }) {
@@ -36,6 +37,7 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
   const [productosFaltantes, setProductosFaltantes] = useState([]);
   const [modalFaltantesVisible, setModalFaltantesVisible] = useState(false);
   const [adminPanelExpanded, setAdminPanelExpanded] = useState(true);
+  const [productosExpandidos, setProductosExpandidos] = useState({});
   
   const user = route.params?.user;
   const inventarioActivo = route.params?.inventarioActivo;
@@ -171,39 +173,7 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
       }
 
       setRawItems(productos || []);
-
-      // Agrupar productos por CodigoBarra + idproducto
-      if (productos && productos.length > 0) {
-        const mapa = {};
-
-        productos.forEach(prod => {
-          const key = `${prod.codigoBarra}_${prod.idproducto || ''}`;
-          if (!mapa[key]) {
-            mapa[key] = {
-              key: key,
-              codigobarra: prod.codigoBarra,
-              idproducto: prod.idproducto,
-              name: prod.descripcion || 'Sin descripción',
-              usuario: prod.empleadoRegistro || prod.usuarioRegistro,
-              lotes: [],
-              totalUnidades: 0,
-              idaperturainventario: prod.idaperturainventario
-            };
-          }
-          const cant = parseFloat(prod.cant_nueva ?? 0) || 0;
-          mapa[key].lotes.push({
-            numLote: prod.numLote,
-            cantidad: cant,
-            idproductolote: prod.idproductolote
-          });
-          mapa[key].totalUnidades += cant;
-        });
-
-        const listaAgrupada = Object.values(mapa);
-        setGroupedItems(listaAgrupada);
-      } else {
-        setGroupedItems([]);
-      }
+      setGroupedItems(agruparProductosVistaDrogueria(productos || []));
     } catch (error) {
       console.error('❌ Error cargando productos en Droguería:', error);
     } finally {
@@ -223,6 +193,13 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
     } finally {
       setIsRefreshing(false);
     }
+  };
+
+  const toggleExpandir = (key) => {
+    setProductosExpandidos(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
   };
 
   // Funciones de Administrador
@@ -582,35 +559,7 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
 
       // Sincronizar el estado en memoria con los datos más recientes
       setRawItems(productosFrescos || []);
-
-      if (productosFrescos && productosFrescos.length > 0) {
-        const mapa = {};
-        productosFrescos.forEach(prod => {
-          const key = `${prod.codigoBarra}_${prod.idproducto || ''}`;
-          if (!mapa[key]) {
-            mapa[key] = {
-              key: key,
-              codigobarra: prod.codigoBarra,
-              idproducto: prod.idproducto,
-              name: prod.descripcion || 'Sin descripción',
-              usuario: prod.empleadoRegistro || prod.usuarioRegistro,
-              lotes: [],
-              totalUnidades: 0,
-              idaperturainventario: prod.idaperturainventario
-            };
-          }
-          const cant = parseFloat(prod.cant_nueva ?? 0) || 0;
-          mapa[key].lotes.push({
-            numLote: prod.numLote,
-            cantidad: cant,
-            idproductolote: prod.idproductolote
-          });
-          mapa[key].totalUnidades += cant;
-        });
-        setGroupedItems(Object.values(mapa));
-      } else {
-        setGroupedItems([]);
-      }
+      setGroupedItems(agruparProductosVistaDrogueria(productosFrescos || []));
 
       if (!productosFrescos || productosFrescos.length === 0) {
         Alert.alert('Error', 'No hay productos para exportar en este modo de vista.');
@@ -998,43 +947,89 @@ export default function InventoryDrogueriaScreen({ navigation, route }) {
             </View>
           </>
         }
-        renderItem={({ item }) => (
-          <View style={styles.card}>
-            <Text style={styles.barcode}>📷 {item.codigobarra}</Text>
-            <Text style={styles.productName}>📝 {item.name}</Text>
-            <Text style={styles.lotesInfo}>
-              📦 Lotes: {item.lotes.length} | ✨ Cantidad Total: {item.totalUnidades}
-            </Text>
-            
-            <View style={styles.row}>
-              <View style={styles.actionButtons}>
-                <TouchableOpacity 
-                  style={styles.editProductButton}
-                  onPress={() => {
-                    const idaperturainventario = idAperturaState || inventarioActivoState?.idaperturainventario || inventarioActivoState?.id || null;
-                    navigation.navigate('EditProductDrogueria', { 
-                      barcode: item.codigobarra,
-                      isNew: false,
-                      user: user,
-                      idaperturainventario: idaperturainventario,
-                      inventarioActivo: inventarioActivoState || { idaperturainventario, idubicacion: idUbicacion },
-                      idubicacion: idUbicacion
-                    });
-                  }}
-                >
-                  <Text style={styles.editText}>✏️ Editar</Text>
-                </TouchableOpacity>
-                
-                <TouchableOpacity 
-                  style={styles.deleteButton}
-                  onPress={() => deleteItem(item)}
-                >
-                  <Text style={styles.deleteText}>🗑️ Eliminar</Text>
-                </TouchableOpacity>
+        renderItem={({ item }) => {
+          const totalLotes = item.lotes?.length || 0;
+          const mostrarTodos = productosExpandidos[item.key] === true;
+          const lotesAMostrar = mostrarTodos || totalLotes <= 3
+            ? item.lotes
+            : item.lotes.slice(0, 3);
+
+          return (
+            <View style={styles.card}>
+              <Text style={styles.barcode}>📷 {item.codigobarra}</Text>
+              <Text style={styles.productName}>📝 {item.name}</Text>
+
+              {item.lotes && item.lotes.length > 0 && (
+                <View style={styles.lotesContainer}>
+                  <Text style={styles.lotesTitle}>
+                    📦 {totalLotes} lote{totalLotes > 1 ? 's' : ''}:
+                  </Text>
+
+                  {lotesAMostrar.map((lote, idx) => (
+                    <View
+                      key={`${item.key}-${lote.key || lote.numLote}-${idx}`}
+                      style={styles.loteRow}
+                    >
+                      <Text style={styles.loteRowText} numberOfLines={1}>
+                        🔢 {lote.numLote}
+                      </Text>
+                      <Text style={styles.loteRowCant}>
+                        ✨ {lote.cantidad}
+                      </Text>
+                      <Text style={styles.loteRowFecha} numberOfLines={1}>
+                        📅 {formatearFechaCorta(lote.fechaValidez) || '-'}
+                      </Text>
+                    </View>
+                  ))}
+
+                  {totalLotes > 3 && (
+                    <TouchableOpacity
+                      style={styles.verMasButton}
+                      onPress={() => toggleExpandir(item.key)}
+                    >
+                      <Text style={styles.verMasText}>
+                        {mostrarTodos
+                          ? '▲ Ver menos'
+                          : `▼ Ver ${totalLotes - 3} lote(s) más`}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+
+              <Text style={styles.usuario}>👤 Usuario: {item.usuario}</Text>
+              <Text style={styles.quantityNew}>✨ Cantidad total: {item.totalUnidades}</Text>
+
+              <View style={styles.row}>
+                <View style={styles.actionButtons}>
+                  <TouchableOpacity 
+                    style={styles.editProductButton}
+                    onPress={() => {
+                      const idaperturainventario = idAperturaState || inventarioActivoState?.idaperturainventario || inventarioActivoState?.id || null;
+                      navigation.navigate('EditProductDrogueria', { 
+                        barcode: item.codigobarra,
+                        isNew: false,
+                        user: user,
+                        idaperturainventario: idaperturainventario,
+                        inventarioActivo: inventarioActivoState || { idaperturainventario, idubicacion: idUbicacion },
+                        idubicacion: idUbicacion
+                      });
+                    }}
+                  >
+                    <Text style={styles.editText}>✏️ Editar</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity 
+                    style={styles.deleteButton}
+                    onPress={() => deleteItem(item)}
+                  >
+                    <Text style={styles.deleteText}>🗑️ Eliminar</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
-          </View>
-        )}
+          );
+        }}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyTitle}>📭 Sin productos</Text>
@@ -1467,7 +1462,58 @@ const styles = StyleSheet.create({
   },
   barcode: { fontWeight: 'bold', fontSize: 14, color: '#2c3e50' },
   productName: { fontSize: 13, color: '#34495e', marginTop: 3 },
-  lotesInfo: { fontSize: 12, color: '#27ae60', fontWeight: 'bold', marginTop: 4 },
+  usuario: { fontSize: 11, color: '#8e44ad', marginTop: 6 },
+  quantityNew: { fontSize: 13, color: '#27ae60', fontWeight: 'bold', marginTop: 4 },
+  lotesContainer: {
+    marginTop: 6,
+    backgroundColor: '#f8fafc',
+    borderRadius: 6,
+    padding: 6,
+    borderLeftWidth: 3,
+    borderLeftColor: '#3498db',
+  },
+  lotesTitle: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+    marginBottom: 4,
+  },
+  loteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 3,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  loteRowText: {
+    flex: 1.3,
+    fontSize: 11,
+    color: '#334155',
+    fontWeight: '600',
+  },
+  loteRowCant: {
+    flex: 0.7,
+    fontSize: 11,
+    color: '#27ae60',
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  loteRowFecha: {
+    flex: 1,
+    fontSize: 10,
+    color: '#3498db',
+    textAlign: 'right',
+  },
+  verMasButton: {
+    marginTop: 4,
+    paddingVertical: 4,
+    alignItems: 'center',
+  },
+  verMasText: {
+    fontSize: 11,
+    color: '#3498db',
+    fontWeight: 'bold',
+  },
   row: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
