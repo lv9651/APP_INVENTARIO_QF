@@ -358,9 +358,8 @@ export const finalizarInventario = async (idEmpleado, idaperturainventario) => {
     console.log('✅ Resultado finalizar:', result);
     
     return {
-      success: result.success === true || result.Success === true || result.Success === 1,
-      estado: result.estado || result.Estado || 'FINALIZADO',
-      mensaje: result.mensaje || result.Message || result.message || 'Inventario finalizado'
+      success: result.success,
+      mensaje: result.message
     };
     
   } catch (error) {
@@ -1223,5 +1222,41 @@ export const obtenerLotesGeneral = async (codigoBarras, idsucursal, idtipoalmace
   } catch (error) {
     console.error('❌ [LOTES GENERAL] Error:', error);
     return { success: false, message: error.message || 'Error al conectar con el servidor.', data: [] };
+  }
+};
+
+export const ObtenerTotalTomaInventarioGeneral = async (idaperturainventario = null, idempleado = null) => {
+  try {
+    let url = `${API_BASE_URL}/api/Inventario/obtenerTotalTomaInventarioGeneral`;
+    const params = [];
+    if (idaperturainventario !== null && idaperturainventario !== undefined && idaperturainventario !== '') {
+      params.push(`idaperturainventario=${encodeURIComponent(idaperturainventario)}`);
+    }
+    if (idempleado !== null && idempleado !== undefined && idempleado !== '') {
+      params.push(`idempleado=${encodeURIComponent(idempleado)}`);
+    }
+    if (params.length > 0) {
+      url += `?${params.join('&')}`;
+    }
+
+    console.log('🔍 [GENERAL] Consultando toma inventario:', url);
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      console.error('Error HTTP al obtener TomaInventarioGeneral:', response.status);
+      return [];
+    }
+
+    const text = await response.text();
+    if (!text || text.trim() === '') {
+      return [];
+    }
+
+    const result = JSON.parse(text);
+    if (Array.isArray(result)) return result;
+    return result.data || [];
+  } catch (error) {
+    console.error('Error al obtener TomaInventarioGeneral:', error);
+    return [];
   }
 };
