@@ -84,8 +84,8 @@ const agruparLotesGeneral = (rawList, defaultSucursalId = 66, defaultSucursalNom
         groupKey: groupKey,
         numeroLote: numLote,
         fechaValidez: fValidezRaw,
-        fechaRecepcion: item.fecharecepcion || item.fechaRecepcion || null,
-        fechaFabricacion: item.fechafabricacion || item.fechaFabricacion || null,
+             fechaRecepcion: item.fecharecepcion || item.fechaRecepcion || null,        // 👈 AGREGAR
+        fechaFabricacion: item.fechafabricacion || item.fechaFabricacion || null, 
         idalmacensucursal: item.idalmacensucursal,
         idsucursal: item.idsucursal || defaultSucursalId,
         nombresucursal: item.nombresucursal || defaultSucursalNombre,
@@ -126,9 +126,9 @@ export default function EditProductScreen({ route, navigation }) {
     esObligatorio, 
     fromScanner, 
     productoData,
-    idaperturainventario,
-    idtipoalmacen,
-    inventarioActivo 
+    idaperturainventario ,
+      idtipoalmacen,          // 👈 AGREGAR
+  inventarioActivo 
   } = params;
   
   const [loading, setLoading] = useState(true);
@@ -185,15 +185,14 @@ export default function EditProductScreen({ route, navigation }) {
   // ==========================================
   // CARGAR LOTES
   // - Modo EDITAR: usa almacen.TomaInventario
-  // - Modo SCANNER/NUEVO: usa catálogo del almacén
+  // - Modo SCANNER/NUEVO: usa catálogo del almacén (SOLO lo que devuelve el API)
   // ==========================================
-  const loadLotes = async (codigoBarra, loteScanner = null, isEditMode = false, idProductoRef = null) => {
+  const loadLotes = async (codigoBarra, loteScanner = null, isEditMode = false) => {
     const idsucursal = user?.sucursalId;
 
     console.log('🔍 [LOTES] === INICIO ===');
     console.log('   codigoBarra:', codigoBarra);
     console.log('   isEditMode:', isEditMode);
-    console.log('   idProductoRef:', idProductoRef);
     console.log('   user.id:', user?.id);
 
     if (!codigoBarra) {
@@ -213,20 +212,12 @@ export default function EditProductScreen({ route, navigation }) {
         const todosLosRegistros = await getTomaInventario(user?.id);
         console.log('📦 [LOTES] Total registros usuario:', todosLosRegistros?.length || 0);
 
-        const idProdBus = String(idProductoRef ?? product?.idProducto ?? '').trim();
-        const sucBus = String(
-          inventarioActivo?.nombre_sucursal_inventario ??
-          user?.sucursalNombre ?? ''
-        ).trim().toUpperCase();
-
         const registrosProducto = (todosLosRegistros || []).filter(r => {
-          const idProdReg = String(r.idProducto ?? r.idproducto ?? '').trim();
-          const sucReg    = String(r.sucursal_destino ?? r.nombresucursal ?? '').trim().toUpperCase();
-
-          return idProdReg === idProdBus && sucReg === sucBus;
+          const codReg = String(r.codigoBarra || r.codigobarra || '').trim();
+          const codBuscar = String(codigoBarra || '').trim();
+          return codReg === codBuscar;
         });
 
-        console.log('📦 [LOTES] Filtro → idProducto:', idProdBus, '| sucursal:', sucBus);
         console.log('📦 [LOTES] Registros del producto:', registrosProducto.length);
 
         const grupos = registrosProducto.map((reg, idx) => {
@@ -277,6 +268,7 @@ export default function EditProductScreen({ route, navigation }) {
 
     // ==========================================
     // MODO SCANNER / NUEVO: catálogo del almacén
+    // SOLO lo que devuelve el API. NO se agrega nada extra.
     // ==========================================
     if (!idsucursal) {
       setLotes([]);
@@ -352,19 +344,12 @@ export default function EditProductScreen({ route, navigation }) {
           const todosLosRegistros = await getTomaInventario(user?.id);
           console.log('📦 [EDIT] Total registros usuario:', todosLosRegistros?.length || 0);
 
-          const idProdBusInit = String(productoData?.idProducto ?? '').trim();
-          const sucBusInit = String(
-            inventarioActivo?.nombre_sucursal_inventario ??
-            user?.sucursalNombre ?? ''
-          ).trim().toUpperCase();
-
           const registrosProducto = (todosLosRegistros || []).filter(r => {
-            const idProdReg = String(r.idProducto ?? r.idproducto ?? '').trim();
-            const sucReg    = String(r.sucursal_destino ?? r.nombresucursal ?? '').trim().toUpperCase();
-            return idProdReg === idProdBusInit && sucReg === sucBusInit;
+            const codReg = String(r.codigoBarra || r.codigobarra || '').trim();
+            const codBuscar = String(codigoBarraFinal).trim();
+            return codReg === codBuscar;
           });
 
-          console.log('📦 [EDIT] Filtro → idProducto:', idProdBusInit, '| sucursal:', sucBusInit);
           console.log('📦 [EDIT] Registros del producto escaneado:', registrosProducto.length);
           yaExiste = registrosProducto.length > 0;
         } catch (err) {
@@ -374,11 +359,11 @@ export default function EditProductScreen({ route, navigation }) {
         if (yaExiste) {
           console.log('✏️ [EDIT] Producto YA inventariado → modo EDITAR');
           setModoEditarReal(true);
-          await loadLotes(codigoBarraFinal, null, true, productoData?.idProducto);
+          await loadLotes(codigoBarraFinal, null, true);
         } else {
           console.log('📷 [EDIT] Producto NUEVO → modo SCANNER');
           setModoEditarReal(false);
-          await loadLotes(codigoBarraFinal, null, false, productoData?.idProducto);
+          await loadLotes(codigoBarraFinal, null, false);
         }
 
         setLoading(false);
@@ -406,7 +391,7 @@ export default function EditProductScreen({ route, navigation }) {
         });
 
         if (barcode) {
-          await loadLotes(barcode, null, false, productoData?.idProducto);
+          await loadLotes(barcode, null, false);
         } else {
           setLotes([]);
         }
@@ -440,7 +425,7 @@ export default function EditProductScreen({ route, navigation }) {
         });
 
         setModoEditarReal(true);
-        await loadLotes(existingTake.codigobarra || barcode, null, true, existingTake.idProducto);
+        await loadLotes(existingTake.codigobarra || barcode, null, true);
       } else {
         console.log('❌ [EDIT] existingTake vacío o sin codigobarra');
         Alert.alert('Error', 'No se encontró el producto');
@@ -474,20 +459,18 @@ export default function EditProductScreen({ route, navigation }) {
       )
     );
   };
-
-  const invActivoParaVolver =
-    inventarioActivo ||
-    (idaperturainventario
-      ? {
-          idaperturainventario,
-          idtipoalmacen: idtipoalmacen ?? null,
-          estado: 'INICIADO',
-          tipo: route.params?.tipoInventario || 'PARCIAL',
-          idsucursal_inventario: String(user?.sucursalId || ''),
-          nombre_sucursal_inventario: user?.sucursalNombre || '',
-        }
-      : undefined);
-
+const invActivoParaVolver =
+  inventarioActivo ||
+  (idaperturainventario
+    ? {
+        idaperturainventario,
+        idtipoalmacen: idtipoalmacen ?? null,
+        estado: 'INICIADO',
+        tipo: route.params?.tipoInventario || 'PARCIAL',
+        idsucursal_inventario: String(user?.sucursalId || ''),
+        nombre_sucursal_inventario: user?.sucursalNombre || '',
+      }
+    : undefined);
   const handleSave = async () => {
     if (!lotes || lotes.length === 0) {
       Alert.alert('Atención', 'No hay lotes para registrar');
@@ -525,14 +508,14 @@ export default function EditProductScreen({ route, navigation }) {
             cantExistencial: lote.cantidadExistencial,
             fechaFabricacion: lote.fechaFabricacion || product.fechaFabricacion || '',
             fechaValidez: lote.fechaValidez || product.fechaValidez || '',
-            fechaRecepcion: lote.fechaRecepcion || product.fechaRecepcion || '',
+           fechaRecepcion:   lote.fechaRecepcion   || sub.fechaRecepcion   || '',
             idProducto: product.idProducto,
             nombresucursal: lote.nombresucursal || product.nombresucursal,
             idsucursal: lote.idsucursal || user?.sucursalId,
-            idsucursal_destino: route.params?.productoData?.idsucursal_destino 
-              || lote.idsucursal_destino 
-              || product.idsucursal_destino 
-              || user?.sucursalId,
+             idsucursal_destino: route.params?.productoData?.idsucursal_destino 
+    || lote.idsucursal_destino 
+    || product.idsucursal_destino 
+    || user?.sucursalId, 
             sucursal_destino: product.sucursal_destino,
             ubicacion: ubicacionLote,
             cant_Nueva: cantNueva
@@ -582,7 +565,7 @@ export default function EditProductScreen({ route, navigation }) {
 
       if (exitoTotal) {
         Alert.alert('✅ Éxito', 'Producto(s) registrado(s) correctamente');
-        navigation.navigate('Inventory', { user, actualizarLista: true, inventarioActivo: invActivoParaVolver });
+        navigation.navigate('Inventory', { user, actualizarLista: true ,   inventarioActivo: invActivoParaVolver });
       } else {
         Alert.alert('⚠️ Advertencia', 'Algunos lotes no pudieron guardarse:\n' + errores.join('\n'));
       }
@@ -599,7 +582,8 @@ export default function EditProductScreen({ route, navigation }) {
     if (esObligatorio && lotes.length > 0) {
       Alert.alert('Atención', 'Debe guardar la cantidad antes de salir');
     } else {
-      navigation.navigate('Inventory', { user, inventarioActivo: invActivoParaVolver });
+      navigation.navigate('Inventory', { user,
+  inventarioActivo: invActivoParaVolver    });
     }
   };
 
@@ -776,7 +760,8 @@ export default function EditProductScreen({ route, navigation }) {
             {lotes.length === 0 && (
               <TouchableOpacity
                 style={styles.volverButton}
-                onPress={() => navigation.navigate('Inventory', { user, inventarioActivo: invActivoParaVolver })}
+                onPress={() => navigation.navigate('Inventory', { user ,
+    inventarioActivo: invActivoParaVolver     })}
               >
                 <Text style={styles.volverButtonText}>← Volver al inventario</Text>
               </TouchableOpacity>
