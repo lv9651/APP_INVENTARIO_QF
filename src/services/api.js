@@ -2,7 +2,7 @@ import { createWebModule } from "expo-modules-core";
 import * as FileSystem from 'expo-file-system';
 import { consolidarLotesDrogueria } from '../utils/drogueriaLotes';
 
-const API_BASE_URL = 'http://apiqfventas.qf.com.pe'; // PRUEBAS
+const API_BASE_URL = 'http://apiws.qf.com.pe'; // PRUEBAS
 //const API_BASE_URL = 'http://apiqfventas.qf.com.pe'; // PRODUCCION
 export const login = async (username, password) => {
   try {
@@ -974,10 +974,15 @@ export const exportarExcelDrogueriaPorApertura = async (inventario) => {
 
 export const GuardarEditarSububicacion = async (idproducto, sububicaciones, idubicacion = null, idusuario = 0) => {
   try {
+    const idAlmacenProductoTerminado = 131;
+    const idSucursalDrogueria = 66;
+
     const payload = {
       idproducto: idproducto !== null && idproducto !== undefined ? Number(idproducto) : null,
-      sububicaciones: sububicaciones || '',
+      idsucursal: idSucursalDrogueria,
+      idalmacen: idAlmacenProductoTerminado,
       idubicacion: idubicacion !== null && idubicacion !== undefined ? Number(idubicacion) : null,
+      sububicaciones: sububicaciones || '',
       idusuario: idusuario
     };
 
@@ -1014,7 +1019,10 @@ export const GuardarEditarSububicacion = async (idproducto, sububicaciones, idub
 
 export const ObtenerSububicacion = async (idproducto, idubicacion) => {
   try {
-    const url =  `${API_BASE_URL}/api/Inventario/ObtenerSububicacion/${idproducto}/${idubicacion}`;
+    const idAlmacenProductoTerminado = 131;
+    const idSucursalDrogueria = 66;
+
+    const url =  `${API_BASE_URL}/api/Inventario/ObtenerSububicacion/${idproducto}/${idSucursalDrogueria}/${idAlmacenProductoTerminado}/${idubicacion}`;
 
     console.log('🔍 [ObtenerSububicacion] Consultando:', url);
     const response = await fetch(url);
